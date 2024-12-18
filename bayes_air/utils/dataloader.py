@@ -169,7 +169,7 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
 
     Args:
         time_series: a pandas Series representing time in 24-hour form, as HHMM integer, 
-                       (*) with 9999 as cancelled flight (requires some pre-processing) 
+                       (*) with 9999 for cancelled flight (requires some pre-processing) 
         time_zone_series: a pandas Series representing the time zone of each time
         out_time_zone: time zone string to use for output
 
@@ -177,7 +177,7 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
         Float hours since midnight, or None for canceled flights
     """
 
-    # Replace "2400" with "2359" (midnight)
+    # Replace 2400 with 2359 (midnight)
     time_series.replace(2400, 2359, inplace=True)
 
     # Convert time strings to datetime objects
