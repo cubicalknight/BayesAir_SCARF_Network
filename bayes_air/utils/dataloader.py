@@ -5,6 +5,7 @@ import functools
 
 import pandas as pd
 import timezonefinder as tzf
+from tqdm import tqdm
 
 
 def load_all_data():
@@ -43,44 +44,46 @@ def load_all_data():
 
 
 # TODO: add our data and rewrite, option to use remapped
-def load_all_data_bts():
+def remap_all_data_bts():
     # Get the directory of the current file
-    script_directory = os.path.dirname(os.path.abspath(__file__))
+    script_dir = Path(__file__).parent 
+    data_dir = script_dir.parent.parent / 'data'
+    base_dir = data_dir / 'bts_raw/lga_reduced_1995-2019_clean'
+    out_dir = data_dir / 'bts_remapped/lga_reduced_1995-2019_clean'
+    airport_locations_path = data_dir / 'airport_locations.csv'
 
-    # TODO: modify this
-
-    # Construct the relative path to the CSV file
-    nominal_file_path = os.path.join(
-        script_directory, "../..", "data", "wn_dec01_dec20.csv"
-    )
-    disrupted_file_path = os.path.join(
-        script_directory, "../..", "data", "wn_dec21_dec30.csv"
-    )
-    airport_locations_file_path = os.path.join(
-        script_directory, "../..", "data", "airport_locations.csv"
-    )
-
-    # Read the CSV files into a DataFrame
-    nominal_df = pd.read_csv(nominal_file_path)
-    disrupted_df = pd.read_csv(disrupted_file_path)
-    airport_locations_df = pd.read_csv(airport_locations_file_path)
-
-    # Filter airport locations to only keep the latest
+    airport_locations_df = pd.read_csv(airport_locations_path)
     airport_locations_df = airport_locations_df[
-        airport_locations_df.AIRPORT_IS_LATEST.astype(bool)
-    ]
-
-    # Concatenate the two DataFrames
-    df = pd.concat([nominal_df, disrupted_df])
-
-    # De-duplicate rows
-    df = df.drop_duplicates()
-
-    return df, airport_locations_df
+        airport_locations_df.AIRPORT_IS_LATEST.astype(bool)]
+    
+    remap_and_save_bts_all(base_dir, out_dir, airport_locations_df)
 
 # TODO: somethign to take the raws and spit out remapped
-def remap_and_save_bts():
-    pass
+def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
+
+    base_dir = Path(base_dir).resolve() 
+    out_dir = Path(out_dir).resolve()
+    base_dir_parquet = base_dir / 'parquet'
+    out_dir_parquet = out_dir / 'parquet'
+    out_dir_csv = out_dir / 'csv'
+
+    paths = list(base_dir_parquet.rglob("*.parquet"))
+
+    for path in tqdm(paths):
+
+        rel_path_parquet = path.relative_to(base_dir_parquet)
+        rel_path_csv = rel_path_parquet.with_suffix('.csv')
+        out_path_parquet = out_dir_parquet / rel_path_parquet
+        out_path_csv = out_dir_csv / rel_path_csv
+        out_path_parquet.parent.mkdir(parents=True, exist_ok=True)
+        out_path_csv.parent.mkdir(parents=True, exist_ok=True)
+
+        df = pd.read_parquet(path)
+        remapped_df = remap_columns(df, airport_locations_df,
+                        out_time_zone="EST", use_bts_columns=True)
+        
+        remapped_df.to_parquet(out_path_parquet)
+        remapped_df.to_csv(out_path_csv, index=False, float_format='%g')
 
 
 def split_nominal_disrupted_data(df: pd.DataFrame):
@@ -180,8 +183,11 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
     # Replace 2400 with 2359 (midnight)
     time_series.replace(2400, 2359, inplace=True)
 
+    # cancelled to zero so as to not error
+    time_series.replace(9999, 0000, inplace=True)
+
     # Convert time strings to datetime objects
-    time_objects = pd.to_datetime(time_series.astype(str), format="%H%M")
+    time_objects = pd.to_datetime(time_series.astype(str).str.zfill(4), format="%H%M")
 
     # Convert time objects to desired time zone
     combined_df = pd.concat([time_objects, time_zone_series], axis=1)
@@ -241,7 +247,7 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
         column_mapping = {
             # comments indicate format expected
             # (*) indicates additional processing required
-            "Tail_Number": "flight_number", # string
+            "Flight_Number_Reporting_Airline": "flight_number", # string
             "FlightDate": "date", # string, like MM/DD/YYYY or MM-DD-YYYY ?
             "Origin": "origin_airport", # string, IATA code
             "Dest": "destination_airport", # string, IATA code
@@ -301,6 +307,13 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
         right_on="airport_code",
     )
     remapped_df = remapped_df.rename(columns={"time_zone": "destination_time_zone"})
+    # drop duplicate columns
+    remapped_df = remapped_df[
+        remapped_df.columns.drop(
+            list(remapped_df.filter(regex='airport_code'))
+        )
+    ]
+
 
     # Convert "yes/no" to True/False in the cancelled column
     if not use_bts_columns:
@@ -416,27 +429,32 @@ def top_N_df(df, number_of_airports: int):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    # Load data, filter, and split by date
-    df, airport_locations_df = load_all_data()
-    df = remap_columns(df, airport_locations_df, "America/Denver")
-    filtered_df = top_N_df(df, 6)
-    nominal_df, disrupted_df = split_nominal_disrupted_data(filtered_df)
-    nominal_dfs, disrupted_dfs = split_by_date(nominal_df), split_by_date(disrupted_df)
+    remap_all_data_bts()
 
-    # Save remapped data to file
-    script_directory = os.path.dirname(os.path.abspath(__file__))
-    df.to_pickle(
-        os.path.join(script_directory, "../..", "data", "wn_data_clean_mst.pkl")
-    )
 
-    # Plot a histogram of the total number of flights between top-N airports
-    N_range = [2, 3, 4, 5, 6, 7, 8, 9, 10]
-    num_flights = []
-    for top_N in N_range:
-        filtered_df = top_N_df(df, top_N)
-        num_flights.append(len(filtered_df))
 
-    plt.plot(N_range, num_flights, "o-")
-    plt.xlabel("Number of airports kept in dataset")
-    plt.ylabel("Total number of flights")
-    plt.show()
+
+    # # Load data, filter, and split by date
+    # df, airport_locations_df = load_all_data()
+    # df = remap_columns(df, airport_locations_df, "America/Denver")
+    # filtered_df = top_N_df(df, 6)
+    # nominal_df, disrupted_df = split_nominal_disrupted_data(filtered_df)
+    # nominal_dfs, disrupted_dfs = split_by_date(nominal_df), split_by_date(disrupted_df)
+
+    # # Save remapped data to file
+    # script_directory = os.path.dirname(os.path.abspath(__file__))
+    # df.to_pickle(
+    #     os.path.join(script_directory, "../..", "data", "wn_data_clean_mst.pkl")
+    # )
+
+    # # Plot a histogram of the total number of flights between top-N airports
+    # N_range = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    # num_flights = []
+    # for top_N in N_range:
+    #     filtered_df = top_N_df(df, top_N)
+    #     num_flights.append(len(filtered_df))
+
+    # plt.plot(N_range, num_flights, "o-")
+    # plt.xlabel("Number of airports kept in dataset")
+    # plt.ylabel("Total number of flights")
+    # plt.show()
