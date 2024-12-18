@@ -1,5 +1,7 @@
 """Utilities for loading data."""
 import os
+from pathlib import Path
+import functools
 
 import pandas as pd
 import timezonefinder as tzf
@@ -38,6 +40,47 @@ def load_all_data():
     df = df.drop_duplicates()
 
     return df, airport_locations_df
+
+
+# TODO: add our data and rewrite, option to use remapped
+def load_all_data_bts():
+    # Get the directory of the current file
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+
+    # TODO: modify this
+
+    # Construct the relative path to the CSV file
+    nominal_file_path = os.path.join(
+        script_directory, "../..", "data", "wn_dec01_dec20.csv"
+    )
+    disrupted_file_path = os.path.join(
+        script_directory, "../..", "data", "wn_dec21_dec30.csv"
+    )
+    airport_locations_file_path = os.path.join(
+        script_directory, "../..", "data", "airport_locations.csv"
+    )
+
+    # Read the CSV files into a DataFrame
+    nominal_df = pd.read_csv(nominal_file_path)
+    disrupted_df = pd.read_csv(disrupted_file_path)
+    airport_locations_df = pd.read_csv(airport_locations_file_path)
+
+    # Filter airport locations to only keep the latest
+    airport_locations_df = airport_locations_df[
+        airport_locations_df.AIRPORT_IS_LATEST.astype(bool)
+    ]
+
+    # Concatenate the two DataFrames
+    df = pd.concat([nominal_df, disrupted_df])
+
+    # De-duplicate rows
+    df = df.drop_duplicates()
+
+    return df, airport_locations_df
+
+# TODO: somethign to take the raws and spit out remapped
+def remap_and_save_bts():
+    pass
 
 
 def split_nominal_disrupted_data(df: pd.DataFrame):
@@ -85,12 +128,13 @@ def split_by_date(df: pd.DataFrame):
     return date_dataframes
 
 
-def convert_to_float_hours_optimized(time_series, time_zone_series):
+def convert_to_float_hours_optimized(time_series, time_zone_series, out_time_zone="UTC"):
     """Convert time in 24-hour format to float hours since midnight.
 
     Args:
         time_series: a pandas Series representing time in 24-hour format (HH:MM)
         time_zone_series: a pandas Series representing the time zone of each time
+        out_time_zone: time zone string to use for output
 
     Returns:
         Float hours since midnight, or None for canceled flights
@@ -107,7 +151,7 @@ def convert_to_float_hours_optimized(time_series, time_zone_series):
     # Convert time objects to UTC
     combined_df = pd.concat([time_objects, time_zone_series], axis=1)
     time_objects = combined_df.apply(
-        lambda row: row.iloc[0].tz_localize(row.iloc[1]).tz_convert("America/Denver"),
+        lambda row: row.iloc[0].tz_localize(row.iloc[1]).tz_convert(out_time_zone),
         axis=1,
     )
 
@@ -116,6 +160,41 @@ def convert_to_float_hours_optimized(time_series, time_zone_series):
 
     # Replace times for cancelled flights with the maximum observed time + 1
     hours_since_midnight[time_series == "00:00"] = hours_since_midnight.max() + 1.0
+
+    return hours_since_midnight
+
+
+def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time_zone='UTC'):
+    """Convert time in 24-hour format to float hours since midnight.
+
+    Args:
+        time_series: a pandas Series representing time in 24-hour form, as HHMM integer, 
+                       (*) with 9999 as cancelled flight (requires some pre-processing) 
+        time_zone_series: a pandas Series representing the time zone of each time
+        out_time_zone: time zone string to use for output
+
+    Returns:
+        Float hours since midnight, or None for canceled flights
+    """
+
+    # Replace "2400" with "2359" (midnight)
+    time_series.replace(2400, 2359, inplace=True)
+
+    # Convert time strings to datetime objects
+    time_objects = pd.to_datetime(time_series.astype(str), format="%H%M")
+
+    # Convert time objects to desired time zone
+    combined_df = pd.concat([time_objects, time_zone_series], axis=1)
+    time_objects = combined_df.apply(
+        lambda row: row.iloc[0].tz_localize(row.iloc[1]).tz_convert(out_time_zone),
+        axis=1,
+    )
+
+    # Extract hour and minute components
+    hours_since_midnight = time_objects.dt.hour + time_objects.dt.minute / 60.0
+
+    # Replace times for cancelled flights with the maximum observed time + 1
+    hours_since_midnight[time_series == 9999] = hours_since_midnight.max() + 1.0
 
     return hours_since_midnight
 
@@ -145,30 +224,49 @@ def time_zone_for_airports(airport_codes, airport_locations_df):
     return time_zones
 
 
-def remap_columns(df, airport_locations_df):
+def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns=False):
     """Remap columns in the DataFrame to the names that we expect.
 
     Args:
         df: the original dataframe
         airport_locations_df: a dataframe containing airport locations
+        use_bts_column_names: data using original column names
+        out_time_zone: time zone to use for output
 
     Returns:
         A new dataframe with remapped columns
     """
     # Define the mapping
-    column_mapping = {
-        "Flight Number": "flight_number",
-        "Date": "date",
-        "Origin Airport Code": "origin_airport",
-        "Dest Airport Code": "destination_airport",
-        "Scheduled Departure Time": "scheduled_departure_time",
-        "Scheduled Arrival Time": "scheduled_arrival_time",
-        "Actual Departure Time": "actual_departure_time",
-        "Actual Arrival Time": "actual_arrival_time",
-        "Wheels On Time": "wheels_on_time",
-        "Wheels Off Time": "wheels_off_time",
-        "Cancelled Flight": "cancelled",
-    }
+    if use_bts_columns:
+        column_mapping = {
+            # comments indicate format expected
+            # (*) indicates additional processing required
+            "Tail_Number": "flight_number", # string
+            "FlightDate": "date", # string, like MM/DD/YYYY or MM-DD-YYYY ?
+            "Origin": "origin_airport", # string, IATA code
+            "Dest": "destination_airport", # string, IATA code
+            "CRSDepTime": "scheduled_departure_time", # (*) integer (HHMM)
+            "CRSArrTime": "scheduled_arrival_time", # (*) integer (HHMM)
+            "DepTime": "actual_departure_time", # (*) integer (HHMM)
+            "ArrTime": "actual_arrival_time", # (*) integer (HHMM)
+            "WheelsOn": "wheels_on_time", # (*) integer (HHMM)
+            "WheelsOff": "wheels_off_time", # (*) integer (HHMM)
+            "Cancelled": "cancelled", # (*) boolean
+        }
+    else: 
+        column_mapping = {
+            "Flight Number": "flight_number",
+            "Date": "date",
+            "Origin Airport Code": "origin_airport",
+            "Dest Airport Code": "destination_airport",
+            "Scheduled Departure Time": "scheduled_departure_time",
+            "Scheduled Arrival Time": "scheduled_arrival_time",
+            "Actual Departure Time": "actual_departure_time",
+            "Actual Arrival Time": "actual_arrival_time",
+            "Wheels On Time": "wheels_on_time",
+            "Wheels Off Time": "wheels_off_time",
+            "Cancelled Flight": "cancelled",
+        }
 
     # Filter the original DataFrame based on the desired columns
     remapped_df = df[column_mapping.keys()]
@@ -205,30 +303,39 @@ def remap_columns(df, airport_locations_df):
     remapped_df = remapped_df.rename(columns={"time_zone": "destination_time_zone"})
 
     # Convert "yes/no" to True/False in the cancelled column
-    remapped_df["cancelled"] = remapped_df["cancelled"] == "Yes"
+    if not use_bts_columns:
+        remapped_df["cancelled"] = remapped_df["cancelled"] == "Yes"
 
     # Convert all times to hours since midnight
-    remapped_df["scheduled_departure_time"] = convert_to_float_hours_optimized(
+    if use_bts_columns:
+        convert_to_float_hours_base = convert_to_float_hours_optimized_bts
+    else:
+        convert_to_float_hours_base = convert_to_float_hours_optimized
+
+    convert_to_float_hours = functools.partial(
+        convert_to_float_hours_base, out_time_zone=out_time_zone)
+
+    remapped_df["scheduled_departure_time"] = convert_to_float_hours(
         remapped_df["scheduled_departure_time"],
         remapped_df["origin_time_zone"],
     )
-    remapped_df["actual_departure_time"] = convert_to_float_hours_optimized(
+    remapped_df["actual_departure_time"] = convert_to_float_hours(
         remapped_df["actual_departure_time"],
         remapped_df["origin_time_zone"],
     )
-    remapped_df["wheels_off_time"] = convert_to_float_hours_optimized(
+    remapped_df["wheels_off_time"] = convert_to_float_hours(
         remapped_df["wheels_off_time"],
         remapped_df["origin_time_zone"],
     )
-    remapped_df["scheduled_arrival_time"] = convert_to_float_hours_optimized(
+    remapped_df["scheduled_arrival_time"] = convert_to_float_hours(
         remapped_df["scheduled_arrival_time"],
         remapped_df["destination_time_zone"],
     )
-    remapped_df["actual_arrival_time"] = convert_to_float_hours_optimized(
+    remapped_df["actual_arrival_time"] = convert_to_float_hours(
         remapped_df["actual_arrival_time"],
         remapped_df["destination_time_zone"],
     )
-    remapped_df["wheels_on_time"] = convert_to_float_hours_optimized(
+    remapped_df["wheels_on_time"] = convert_to_float_hours(
         remapped_df["wheels_on_time"],
         remapped_df["origin_time_zone"],
     )
@@ -311,7 +418,7 @@ if __name__ == "__main__":
 
     # Load data, filter, and split by date
     df, airport_locations_df = load_all_data()
-    df = remap_columns(df, airport_locations_df)
+    df = remap_columns(df, airport_locations_df, "America/Denver")
     filtered_df = top_N_df(df, 6)
     nominal_df, disrupted_df = split_nominal_disrupted_data(filtered_df)
     nominal_dfs, disrupted_dfs = split_by_date(nominal_df), split_by_date(disrupted_df)
