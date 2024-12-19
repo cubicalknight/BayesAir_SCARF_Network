@@ -71,6 +71,10 @@ def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
 
     for path in tqdm(paths):
 
+        # debugging...
+        # if path.stem != 'lga_reduced_2004_08_clean':
+        #     continue
+
         rel_path_parquet = path.relative_to(base_dir_parquet)
         rel_path_csv = rel_path_parquet.with_suffix('.csv')
         out_path_parquet = out_dir_parquet / rel_path_parquet
@@ -129,7 +133,7 @@ def split_by_date(df: pd.DataFrame):
         date_df.sort_values(by="scheduled_departure_time", inplace=True)
 
     return date_dataframes
-
+    
 
 def convert_to_float_hours_optimized(time_series, time_zone_series, out_time_zone="UTC"):
     """Convert time in 24-hour format to float hours since midnight.
@@ -166,7 +170,6 @@ def convert_to_float_hours_optimized(time_series, time_zone_series, out_time_zon
 
     return hours_since_midnight
 
-
 def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time_zone='UTC'):
     """Convert time in 24-hour format to float hours since midnight.
 
@@ -187,7 +190,20 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
     time_series.replace(9999, 0000, inplace=True)
 
     # Convert time strings to datetime objects
-    time_objects = pd.to_datetime(time_series.astype(str).str.zfill(4), format="%H%M")
+    try: 
+        time_objects = pd.to_datetime(time_series.astype(str).str.zfill(4), format="%H%M")
+    except:
+        for i in range(len(time_series)):
+            try:
+                x = pd.to_datetime(time_series.astype(str).str.zfill(4).iloc[i], format="%H%M")
+            except:
+                print("hi")
+                print(i, time_series.iloc[i], time_series.astype(str).str.zfill(4).iloc[i])
+                raise ValueError("there's probably something wrong with one of the times -- fix it")
+        print(x)
+        # example:
+        # in 2004-08, this flight was wrong: 2004-08-21,BNA,LGA,OH,N458CA,5413,1405,160,1720,1955,1637,1946,False
+        # fix is 160 -> 1600 i think
 
     # Convert time objects to desired time zone
     combined_df = pd.concat([time_objects, time_zone_series], axis=1)
