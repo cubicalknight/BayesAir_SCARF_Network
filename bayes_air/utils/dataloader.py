@@ -44,12 +44,12 @@ def load_all_data():
 
 
 # TODO: add our data and rewrite, option to use remapped
-def remap_all_data_bts():
+def remap_all_data_bts(time_res):
     # Get the directory of the current file
     script_dir = Path(__file__).parent 
     data_dir = script_dir.parent.parent / 'data'
-    base_dir = data_dir / 'bts_raw/lga_reduced_1995-2019_clean'
-    out_dir = data_dir / 'bts_remapped/lga_reduced_1995-2019_clean'
+    base_dir = data_dir / f'bts_raw/lga_reduced_1995-2019_clean_{time_res}'
+    out_dir = data_dir / f'bts_remapped/lga_reduced_1995-2019_clean_{time_res}'
     airport_locations_path = data_dir / 'airport_locations.csv'
 
     airport_locations_df = pd.read_csv(airport_locations_path)
@@ -77,17 +77,23 @@ def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
 
         rel_path_parquet = path.relative_to(base_dir_parquet)
         rel_path_csv = rel_path_parquet.with_suffix('.csv')
+
         out_path_parquet = out_dir_parquet / rel_path_parquet
         out_path_csv = out_dir_csv / rel_path_csv
         out_path_parquet.parent.mkdir(parents=True, exist_ok=True)
         out_path_csv.parent.mkdir(parents=True, exist_ok=True)
 
-        df = pd.read_parquet(path)
-        remapped_df = remap_columns(df, airport_locations_df,
-                        out_time_zone="EST", use_bts_columns=True)
+        remapped_df = remap_columns(
+                        pd.read_parquet(path), 
+                        airport_locations_df,
+                        out_time_zone="EST", 
+                        use_bts_columns=True
+                    )
         
         remapped_df.to_parquet(out_path_parquet)
         remapped_df.to_csv(out_path_csv, index=False, float_format='%g')
+
+        del remapped_df
 
 
 def split_nominal_disrupted_data(df: pd.DataFrame):
@@ -445,7 +451,7 @@ def top_N_df(df, number_of_airports: int):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    remap_all_data_bts()
+    remap_all_data_bts('daily')
 
 
 
