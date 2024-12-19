@@ -18,3 +18,7 @@ but you can just run `poetry shell` to activate the virtual environment
 ## Getting started
 
 TODO@dawsonc add some getting started instructions linking to the notebook.
+
+## other notes
+
+see [here](https://github.com/jz268/atm_generative) for some of the data stuff, will merge eventually probably
