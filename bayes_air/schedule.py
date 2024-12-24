@@ -5,7 +5,6 @@ from pathlib import Path
 
 from bayes_air.types import Airport, Flight, Time, Schedule, AirportCode, SourceSupernode
 
-
 # Parse the provided data into our custom data structures
 def parse_flight(schedule_row: tuple, device=None) -> Flight:
     """
@@ -37,6 +36,8 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
     actual_arrival_time = schedule_row["actual_arrival_time"]
     wheels_off_time = schedule_row["wheels_off_time"]
     wheels_on_time = schedule_row["wheels_on_time"]
+    is_incoming_flight = schedule_row["is_incoming_flight"]
+    is_outgoing_flight = schedule_row["is_outgoing_flight"]
     cancelled = (
         torch.tensor(1.0, device=device)
         if schedule_row["cancelled"]
@@ -69,6 +70,8 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
         wheels_on_time=Time(wheels_on_time).to(device)
         if wheels_on_time is not None
         else None,
+        is_incoming_flight=is_incoming_flight,
+        is_outgoing_flight=is_outgoing_flight,
     )
 
 
@@ -126,8 +129,16 @@ def split_full_schedule(
     network_mask = schedule_df["origin_airport"].isin(network_airport_codes)
     incoming_mask = ~network_mask
 
-    network_schedule_df = schedule_df[network_mask]
-    incoming_schedule_df = schedule_df[incoming_mask]
+    network_schedule_df = schedule_df[network_mask].copy()
+    incoming_schedule_df = schedule_df[incoming_mask].copy()
+
+    network_schedule_df["is_incoming_flight"] = False
+    network_schedule_df["is_outgoing_flight"] = ~(
+        network_schedule_df["destination_airport"].isin(network_airport_codes)
+    )
+    
+    incoming_schedule_df["is_incoming_flight"] = True
+    incoming_schedule_df["is_outgoing_flight"] = False
 
     return network_schedule_df, incoming_schedule_df
 
@@ -160,6 +171,8 @@ def parse_split_schedule(
         a list of flights, and
         a list of airports, for both incoming and network
     """
+    # print(network_schedule_df.dtypes, incoming_schedule_df.dtypes)
+
     # Get a list of flights
     network_flights = [
         parse_flight(row, device=device) 
@@ -177,7 +190,10 @@ def parse_split_schedule(
 
     # Create an airport object for each airport code in network
     network_airports = [Airport(code) for code in network_airport_codes]
-    source_supernode = SourceSupernode(source_airport_codes)
+    source_supernode = SourceSupernode(
+        source_codes=source_airport_codes,
+        dest_codes=network_airport_codes,
+    )
 
     return (
         network_flights, network_airports,

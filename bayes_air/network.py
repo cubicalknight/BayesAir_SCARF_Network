@@ -159,6 +159,7 @@ class NetworkState:
         """
         # For each departing flight, sample a travel time and then add it to the
         # in-transit flights list
+        # print(departing_flights)
         for flight in departing_flights:
             # Sample a travel time
             nominal_travel_time = travel_times[flight.origin, flight.destination]
@@ -224,7 +225,7 @@ class AugmentedNetworkState():
     pending_incoming_flights: list[Flight]
     # pending outgoing flights can be added to network state
 
-    completed_outgoing_flights: list[Flight]
+    completed_outgoing_flights: list[Flight] = field(default_factory=list)
     # completed incoming flights can be added to network state
 
     ### setup / utility ###
@@ -232,7 +233,6 @@ class AugmentedNetworkState():
     def __post_init__(self):
         # Sort pending flights by scheduled departure time
         self.pending_incoming_flights.sort(key=lambda flight: flight.scheduled_departure_time)
-        self.pending_outgoing_flights.sort(key=lambda flight: flight.scheduled_departure_time)
 
     @property
     def complete(self):
@@ -240,7 +240,6 @@ class AugmentedNetworkState():
         return (
             self.network_state.complete
             and len(self.pending_incoming_flights) == 0
-            and len(self.pending_outgoing_flights) == 0
         )
     
     ### pop_ready_to_depart_flights ###
@@ -253,11 +252,11 @@ class AugmentedNetworkState():
     ]:
         # flights originating inside the network ready to depart
         network_ready_to_depart_flights, network_ready_times = \
-            self.network_state.pop_ready_to_depart_flights(self, time, var_prefix)
+            self.network_state.pop_ready_to_depart_flights(time, var_prefix)
         
         # flights originating outside the network ready to depart
         incoming_ready_to_depart_flights, incoming_ready_times = \
-            self.pop_incoming_ready_to_depart_flights(self, time, var_prefix)
+            self.pop_incoming_ready_to_depart_flights(time, var_prefix)
         
         # ready_to_depart_flights = \
         #     network_ready_to_depart_flights + incoming_ready_to_depart_flights
@@ -274,7 +273,20 @@ class AugmentedNetworkState():
     def pop_incoming_ready_to_depart_flights(
         self, time: Time, var_prefix: str = ""
     ) -> tuple[list[Flight], list[Time]]:
-        return [], []
+        
+        ready_to_depart_incoming_flights = []
+        ready_times = []
+        new_pending_incoming_flights = []
+        for flight in self.pending_incoming_flights:
+            if flight.scheduled_departure_time <= time:
+                ready_to_depart_incoming_flights.append(flight)
+                # TODO: better departure time...
+                ready_times.append(flight.scheduled_departure_time)
+            else:
+                new_pending_incoming_flights.append(flight)
+        self.pending_incoming_flights = new_pending_incoming_flights
+
+        return ready_to_depart_incoming_flights, ready_times
     
 
     ### add_in_transit_flights ###
@@ -303,12 +315,17 @@ class AugmentedNetworkState():
             if not flight.is_outgoing_flight
         ] + incoming_departing_flights
         
+        # print("")
+        # print(outgoing_departing_flights)
+        # print(departing_flights)
+
         self.network_state.add_in_transit_flights(
             departing_flights,
             travel_times,
             travel_time_variation,
             var_prefix
         )
+
 
     ### reuse network state stuff ###
 

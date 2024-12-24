@@ -43,6 +43,23 @@ def load_all_data():
     return df, airport_locations_df
 
 
+def load_remapped_data_bts(
+        dates: pd.DatetimeIndex) -> list[pd.DataFrame]:
+    script_dir = Path(__file__).parent 
+    data_dir = script_dir.parent.parent / 'data'
+    remapped_dir = data_dir / 'bts_remapped/lga_reduced_1995-2019_clean_daily/parquet'
+
+    data = []
+
+    for date in dates:
+        year, month, day = f'{date.year:04d}', f'{date.month:02d}', f'{date.day:02d}'
+        df_path = remapped_dir / f'{year}/{month}/lga_reduced_{year}_{month}_{day}_clean.parquet'
+        df = pd.read_parquet(df_path)
+        data.append(df)
+    
+    return data
+
+
 # TODO: add our data and rewrite, option to use remapped
 def remap_all_data_bts(time_res):
     # Get the directory of the current file
