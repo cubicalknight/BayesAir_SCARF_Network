@@ -11,7 +11,7 @@ from bayes_air.types.util import AirportCode, Time
 
 
 @dataclass
-class DepartureQueueEntry:
+class QueueEntry:
     """An entry in a runway queue.
 
     Attributes:
@@ -241,14 +241,15 @@ class SourceSupernode:
         last_departure_time: unused?
     """
 
-    departure_queue_by_destination: dict[
+    codes: list[AirportCode]
+    departure_queues: dict[
         AirportCode, list[DepartureQueueEntry]
         ] = field(default_factory=dict)
     last_departure_time: Time = field(default_factory=lambda: Time(0.0)) # unused?
 
     def update_departure_queue(
         self, time: Time, 
-        remaining_arrival_capacity: dict[AirportCode, int],
+        # remaining_arrival_capacity: dict[AirportCode, int],
         var_prefix: str = "",
     ) -> tuple[list[Flight], list[Flight]]:
         """Update the runway queue by removing flights that have been serviced.
@@ -263,7 +264,7 @@ class SourceSupernode:
 
         departed_flights_by_destination = {}
 
-        for code, departure_queue in self.departure_queue_by_destination.items():
+        for code, departure_queue in self.departure_queues.items():
 
             departed_flights = []
             capacity = remaining_arrival_capacity[code]

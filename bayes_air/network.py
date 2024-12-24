@@ -6,7 +6,15 @@ import pyro
 import pyro.distributions as dist
 import torch
 
-from bayes_air.types import Airport, AirportCode, Flight, DepartureQueueEntry, Time, SourceSupernode
+from bayes_air.types import (
+    Airport, 
+    SourceSupernode, 
+    AirportCode, 
+    Time, 
+    Flight, 
+    DepartureQueueEntry, 
+    QueueEntry
+)
 
 
 @dataclass
@@ -187,7 +195,7 @@ class NetworkState:
             # If the flight is ready to arrive, add it to the runway queue
             if arrival_time <= time:
                 # Add the completed flights to the arrival queue
-                queue_entry = DepartureQueueEntry(flight=flight, queue_start_time=arrival_time)
+                queue_entry = QueueEntry(flight=flight, queue_start_time=arrival_time)
                 self.airports[flight.destination].runway_queue.append(queue_entry)
                 # print(f"\t{flight} landing at {arrival_time}")
             else:
@@ -198,9 +206,17 @@ class NetworkState:
         self.in_transit_flights = new_in_transit_flights
 
 
+# we can try to implement: 
+# -> ground delay somehow
+#   -> so like a dict[AirportCode, whatefver the delay is]
+#
+# we can try adding minutes in trail or mdi? if not already implictly there
+# -> mdi would be on the departure side, i guess like add delays if needed?
+# -> minutes in trail would be on arrival side?
+
 
 @dataclass
-class NetworkStateWithSupernode():
+class AugmentedNetworkState():
 
     network_state: NetworkState
     source_supernode: SourceSupernode
@@ -211,7 +227,7 @@ class NetworkStateWithSupernode():
     completed_outgoing_flights: list[Flight]
     # completed incoming flights can be added to network state
 
-     ### setup / utility ###
+    ### setup / utility ###
 
     def __post_init__(self):
         # Sort pending flights by scheduled departure time
@@ -227,13 +243,14 @@ class NetworkStateWithSupernode():
             and len(self.pending_outgoing_flights) == 0
         )
     
-
     ### pop_ready_to_depart_flights ###
 
     def pop_ready_to_depart_flights(
         self, time: Time, var_prefix: str = ""
-    ) -> tuple[list[Flight], list[Time]]:
-        
+    ) -> tuple[
+        list[Flight], list[Time],
+        list[Flight], list[Time]
+    ]:
         # flights originating inside the network ready to depart
         network_ready_to_depart_flights, network_ready_times = \
             self.network_state.pop_ready_to_depart_flights(self, time, var_prefix)
@@ -242,13 +259,16 @@ class NetworkStateWithSupernode():
         incoming_ready_to_depart_flights, incoming_ready_times = \
             self.pop_incoming_ready_to_depart_flights(self, time, var_prefix)
         
-        ready_to_depart_flights = \
-            network_ready_to_depart_flights + incoming_ready_to_depart_flights
+        # ready_to_depart_flights = \
+        #     network_ready_to_depart_flights + incoming_ready_to_depart_flights
         
-        ready_times = network_ready_times + incoming_ready_times
+        # ready_times = network_ready_times + incoming_ready_times
 
         # includes flights originating inside and outside the network
-        return ready_to_depart_flights, ready_times
+        return (
+            network_ready_to_depart_flights, network_ready_times,
+            incoming_ready_to_depart_flights, incoming_ready_times
+        )
     
     
     def pop_incoming_ready_to_depart_flights(
@@ -263,44 +283,42 @@ class NetworkStateWithSupernode():
         self,
         network_departing_flights: list[Flight],
         incoming_departing_flights: list[Flight],
-        network_travel_times: dict[tuple[AirportCode, AirportCode], Time],
-        incoming_travel_times: dict[tuple[AirportCode, AirportCode], Time],
+        travel_times: dict[tuple[AirportCode, AirportCode], Time],
         travel_time_variation: Union[torch.tensor, float],
         var_prefix: str = "",
     ) -> None:
         
-        # need to clearly separate within network and out of network outgoing flights
+        # for flights with destination outside network, stop tracking after departure
+        outgoing_departing_flights = [
+            flight for flight in network_departing_flights
+            if flight.is_outgoing_flight
+        ]
+        self.completed_outgoing_flights.extend(
+            outgoing_departing_flights
+        )
 
-        # here we need to intercept the flights going out of network
+        # this should include all flights with destination in network
+        departing_flights = [
+            flight for flight in network_departing_flights
+            if not flight.is_outgoing_flight
+        ] + incoming_departing_flights
         
         self.network_state.add_in_transit_flights(
-            network_departing_flights,
-            network_travel_times,
+            departing_flights,
+            travel_times,
             travel_time_variation,
             var_prefix
         )
 
-        self.pop_outgoing_in_transit_flights()
+    ### reuse network state stuff ###
 
-        # adds incoming flights to network state
-        self.add_incoming_in_transit_flights(
-            incoming_departing_flights,
-            incoming_travel_times,
-            travel_time_variation,
-            var_prefix
-        )
-
-    def process_outgoing_in_transit_flights(
-        self
-    ) -> list[Flight]:
-        # need to take them out of network state, and then mark as completed
-        pass
-        
-    def add_incoming_in_transit_flights(
-        self,
-        incoming_travel_times: list[Flight],
-        travel_time_variation: Union[torch.tensor, float],
-        var_prefix: str = "",
+    def add_completed_flights(
+        self, landing_flights: list[Flight]
     ) -> None:
-        # add the incoming flights to netwrok state
-        pass
+        return self.network_state.add_completed_flights(landing_flights)
+    
+    def update_in_transit_flights(
+        self, time: Time
+    ) -> None:
+        return self.network_state.update_in_transit_flights(time)
+
