@@ -241,14 +241,24 @@ class SourceSupernode:
         last_departure_time: unused?
     """
 
-    codes: list[AirportCode]
+    source_codes: list[AirportCode]
+    dest_codes: list[AirportCode]
     departure_queues: dict[
         AirportCode, list[DepartureQueueEntry]
         ] = field(default_factory=dict)
+    # departure queue is for each destination airport!
     last_departure_time: Time = field(default_factory=lambda: Time(0.0)) # unused?
+    runway_use_time_std_dev: Time = field(default_factory=lambda: Time(1.0))
 
-    def update_departure_queue(
-        self, time: Time, 
+    def __post_init__(self):
+        # initialize departure queues
+        for code in self.dest_codes:
+            self.departure_queues[code] = []
+
+    def update_departure_queue_for_destination(
+        self, 
+        time: Time, 
+        destination_code: AirportCode,
         # remaining_arrival_capacity: dict[AirportCode, int],
         var_prefix: str = "",
     ) -> tuple[list[Flight], list[Flight]]:
@@ -258,36 +268,28 @@ class SourceSupernode:
             time: The current time.
             var_prefix: the prefix for sampled variable names
 
-        Returns: a list of flights that have departed and a list of flights that have
-            landed.
+        Returns: a list of flights that have departed
         """
+        departed_flights = []
+        departure_queue = self.departure_queues[destination_code]
 
-        departed_flights_by_destination = {}
+        # for now we just pump them out as we get them
+        while departure_queue and (
+            departure_queue[0].ready_time <= time
+        ):
+            departure_queue_entry = departure_queue.pop(0)
 
-        for code, departure_queue in self.departure_queues.items():
+            flight = departure_queue_entry.flight
+            # TODO: make this make sense?
+            departure_queue_entry.approved_time = time
 
-            departed_flights = []
-            capacity = remaining_arrival_capacity[code]
+            # Takeoff! Assign a departure time and add the flight to the
+            # list of departed flights
+            self._assign_departure_time(departure_queue_entry, var_prefix)
+            departed_flights.append(flight)
 
-            while departure_queue and (
-                capacity > 0 and 
-                departure_queue[0].ready_time <= time
-            ):
-                departure_queue_entry = self.departure_queue.pop(0)
-                capacity -= 1
-
-                flight = departure_queue_entry.flight
-                # TODO: make this make sense?
-                flight.approved_time = time
-
-                # Takeoff! Assign a departure time and add the flight to the
-                # list of departed flights
-                self._assign_departure_time(departure_queue_entry, var_prefix)
-                departed_flights.append(flight)
-            
-            departed_flights_by_destination[code] = departed_flights
-
-        return departed_flights_by_destination
+        self.departure_queues[destination_code] = departure_queue
+        return departed_flights
 
     def _assign_departure_time(
         self,

@@ -327,8 +327,8 @@ def augmented_air_traffic_network_model(
         }
 
     # sample latent variables for variables outside network
-    incoming_airport_codes = states[0].source_supernode.codes
-    # TODO: make this context instead of latent?
+    incoming_airport_codes = states[0].source_supernode.source_codes
+    # TODO: make this context instead of latent? like add the obs thing
     incoming_travel_times = {
         (origin, destination): pyro.sample(
             f"travel_time_{origin}_{destination}",
@@ -377,11 +377,21 @@ def augmented_air_traffic_network_model(
                 airport.available_aircraft.append(torch.tensor(0.0, device=device))
                 i += 1
 
+        # assign parameter to source supernode
+        state.source_supernode.runway_use_time_std_dev = runway_use_time_std_dev
+
         # Simulate the movement of aircraft within the system for a fixed period of time
         t = torch.tensor(0.0, device=device)
         while not state.complete:
             # Update the current time
             t += delta_t
+
+            # print(t)
+            # print(f'pending incoming flights: {len(state.pending_incoming_flights)}')
+            # print(f' pending network flights: {len(state.network_state.pending_flights)}')
+            # print(f'      in transit flights: {len(state.network_state.in_transit_flights)}')
+            # print(f'        LGA runway queue: {len(state.network_state.airports["LGA"].runway_queue)}')
+            # exit()
 
             # All parked aircraft that are ready to turnaround get serviced
             for airport in state.network_state.airports.values():
@@ -412,7 +422,7 @@ def augmented_air_traffic_network_model(
 
             for flight, ready_time in zip(incoming_ready_to_depart_flights, incoming_ready_times):
                 queue_entry = DepartureQueueEntry(flight=flight, ready_time=ready_time)
-                state.source_supernode.departure_queues[flight.origin].append(queue_entry)
+                state.source_supernode.departure_queues[flight.destination].append(queue_entry)
 
             # All flights that are using the runway get serviced
             for airport in state.network_state.airports.values():
@@ -423,8 +433,9 @@ def augmented_air_traffic_network_model(
                 
                 # TODO: update departure things from source supernode
                 incoming_departed_flights = \
-                    state.source_supernode.update_departure_queue(
-                        t, var_prefix # maybe also need some info from the previous step?
+                    state.source_supernode.update_departure_queue_for_destination(
+                        t, airport.code, var_prefix 
+                        # maybe also need some info from the previous step?
                     )
 
                 # Departing flights get added to the in-transit list, while landed flights
