@@ -11,7 +11,7 @@ from bayes_air.types.util import AirportCode, Time
 
 
 @dataclass
-class QueueEntry:
+class DepartureQueueEntry:
     """An entry in a runway queue.
 
     Attributes:
@@ -25,6 +25,12 @@ class QueueEntry:
     queue_start_time: Time
     total_wait_time: Time = field(default_factory=lambda: Time(0.0))
     assigned_service_time: Optional[Time] = None
+
+@dataclass
+class DepartureQueueEntry:
+    flight: Flight
+    ready_time: Time
+    approved_time: Optional[Time] = None
 
 
 @dataclass
@@ -58,7 +64,7 @@ class Airport:
         default_factory=lambda: torch.tensor(0.0)
     )
     base_cancel_prob: torch.tensor = field(default_factory=lambda: torch.tensor(0.0))
-    runway_queue: list[QueueEntry] = field(default_factory=list)
+    runway_queue: list[DepartureQueueEntry] = field(default_factory=list)
     turnaround_queue: list[Time] = field(default_factory=list)
     available_aircraft: list[Time] = field(default_factory=list)
     last_departure_time: Time = field(default_factory=lambda: Time(0.0))
@@ -128,7 +134,7 @@ class Airport:
         return departed_flights, landed_flights
 
     def _assign_service_time(
-        self, queue_entry: QueueEntry, time: Time, var_prefix: str = ""
+        self, queue_entry: DepartureQueueEntry, time: Time, var_prefix: str = ""
     ) -> None:
         """Sample a random service time for an entry in the runway queue.
 
@@ -163,7 +169,7 @@ class Airport:
 
     def _assign_departure_time(
         self,
-        queue_entry: QueueEntry,
+        queue_entry: DepartureQueueEntry,
         var_prefix: str = "",
     ) -> None:
         """Sample a random departure time for a flight that is using the runway.
@@ -186,7 +192,7 @@ class Airport:
         # )
 
     def _assign_arrival_time(
-        self, queue_entry: QueueEntry, var_prefix: str = ""
+        self, queue_entry: DepartureQueueEntry, var_prefix: str = ""
     ) -> None:
         """Sample a random arrival time for a flight that is using the runway.
 
@@ -219,3 +225,95 @@ class Airport:
             dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
         )
         self.turnaround_queue.append(flight.simulated_arrival_time + turnaround_time)
+
+
+
+
+@dataclass
+class SourceSupernode:
+    """
+    Represents aggregation of all source airports for incoming flights,
+    a simplified approximation used for single node analysis only
+    For now, we just attempt to emit flight at ready time
+
+    Attributes:
+        departure_queue_by_destination: 
+        last_departure_time: unused?
+    """
+
+    departure_queue_by_destination: dict[
+        AirportCode, list[DepartureQueueEntry]
+        ] = field(default_factory=dict)
+    last_departure_time: Time = field(default_factory=lambda: Time(0.0)) # unused?
+
+    def update_departure_queue(
+        self, time: Time, 
+        remaining_arrival_capacity: dict[AirportCode, int],
+        var_prefix: str = "",
+    ) -> tuple[list[Flight], list[Flight]]:
+        """Update the runway queue by removing flights that have been serviced.
+        TODO: update this!!
+        Args:
+            time: The current time.
+            var_prefix: the prefix for sampled variable names
+
+        Returns: a list of flights that have departed and a list of flights that have
+            landed.
+        """
+
+        departed_flights_by_destination = {}
+
+        for code, departure_queue in self.departure_queue_by_destination.items():
+
+            departed_flights = []
+            capacity = remaining_arrival_capacity[code]
+
+            while departure_queue and (
+                capacity > 0 and 
+                departure_queue[0].ready_time <= time
+            ):
+                departure_queue_entry = self.departure_queue.pop(0)
+                capacity -= 1
+
+                flight = departure_queue_entry.flight
+                # TODO: make this make sense?
+                flight.approved_time = time
+
+                # Takeoff! Assign a departure time and add the flight to the
+                # list of departed flights
+                self._assign_departure_time(departure_queue_entry, var_prefix)
+                departed_flights.append(flight)
+            
+            departed_flights_by_destination[code] = departed_flights
+
+        return departed_flights_by_destination
+
+    def _assign_departure_time(
+        self,
+        departure_queue_entry: DepartureQueueEntry,
+        var_prefix: str = "",
+    ) -> None:
+        """Sample a random departure time for a flight that is using the runway.
+
+        Args:
+            queue_entry: The queue entry for the flight to assign a departure time to.
+            var_prefix: prefix for sampled variable names.
+        """
+        departure_queue_entry.flight.simulated_departure_time = pyro.sample(
+            var_prefix + str(departure_queue_entry.flight) + "_simulated_departure_time",
+            dist.Normal(
+                departure_queue_entry.approved_time,
+                self.runway_use_time_std_dev,
+            ),
+            obs=departure_queue_entry.flight.actual_departure_time,
+        )
+
+        # print(
+        #     f"\t{queue_entry.flight} departing at {queue_entry.flight.simulated_departure_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
+        # )
+
+
+
+@dataclass
+class SinkSupernode:
+    pass

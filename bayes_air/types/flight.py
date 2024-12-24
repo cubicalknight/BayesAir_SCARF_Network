@@ -40,6 +40,9 @@ class Flight:
     actual_arrival_time: Optional[Time] = None
     wheels_on_time: Optional[Time] = None
     wheels_off_time: Optional[Time] = None
+    
+    is_incoming_flight: Optional[bool] = False
+    is_outgoing_flight: Optional[bool] = False
 
     def __str__(self) -> str:
         return f"{self.flight_number}_{self.origin}_{self.destination}"

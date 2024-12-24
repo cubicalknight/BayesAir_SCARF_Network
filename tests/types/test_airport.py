@@ -2,7 +2,7 @@
 import unittest
 
 from bayes_air.types import Airport, Flight, Time
-from bayes_air.types.airport import QueueEntry
+from bayes_air.types.airport import DepartureQueueEntry
 
 
 class TestAirport(unittest.TestCase):
@@ -44,7 +44,7 @@ class TestAirport(unittest.TestCase):
             scheduled_departure_time=10.0,
             scheduled_arrival_time=20.0,
         )
-        queue_entry = QueueEntry(flight, 0.0, assigned_service_time=Time(10.0))
+        queue_entry = DepartureQueueEntry(flight, 0.0, assigned_service_time=Time(10.0))
         self.airport.runway_queue.append(queue_entry)
 
         # Update runway queue and check the departed flights
@@ -62,7 +62,7 @@ class TestAirport(unittest.TestCase):
             scheduled_departure_time=10.0,
             scheduled_arrival_time=20.0,
         )
-        queue_entry = QueueEntry(flight, 0.0, assigned_service_time=Time(20.0))
+        queue_entry = DepartureQueueEntry(flight, 0.0, assigned_service_time=Time(20.0))
         self.airport.runway_queue.append(queue_entry)
 
         # Update runway queue and check the departed flights
