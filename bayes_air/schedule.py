@@ -1,8 +1,9 @@
 """Define methods for working with schedules."""
 import pandas as pd
 import torch
+from pathlib import Path
 
-from bayes_air.types import Airport, Flight, Time
+from bayes_air.types import Airport, Flight, Time, Schedule, AirportCode, SourceSupernode
 
 
 # Parse the provided data into our custom data structures
@@ -72,7 +73,7 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
 
 
 def parse_schedule(
-    schedule_df: pd.DataFrame, device=None
+    schedule_df: Schedule, device=None
 ) -> tuple[list[Flight], list[Flight]]:
     """Parse a pandas dataframe for a schedule into a list of pending flights.
 
@@ -104,3 +105,97 @@ def parse_schedule(
     airports = [Airport(code) for code in airport_codes]
 
     return flights, airports
+
+
+def split_full_schedule(
+    schedule_df: Schedule,
+    network_airport_codes: list[AirportCode]
+) -> tuple[Schedule, Schedule]:
+    """
+    takes in schedule, splits into incoming and network flights,
+    where incoming is originating outside the network
+
+    Args:
+        schedule_df:
+        network_aiport_codes:
+
+    returns:
+        network_schedule_df, incoming_schedule_df
+    """
+
+    network_mask = schedule_df["origin_airport"].isin(network_airport_codes)
+    incoming_mask = ~network_mask
+
+    network_schedule_df = schedule_df[network_mask]
+    incoming_schedule_df = schedule_df[incoming_mask]
+
+    return network_schedule_df, incoming_schedule_df
+
+
+def parse_split_schedule(
+    network_schedule_df: Schedule, 
+    incoming_schedule_df: Schedule,
+    device=None
+) -> tuple[
+    list[Flight], list[Flight], 
+    list[Flight], list[Flight]
+]:
+    """Parse a pandas dataframe for a schedule into a list of pending flights.
+
+    Args:
+        network_schedule_df: A pandas dataframe with the following columns:
+            flight_number: The flight number
+            origin_airport: The airport code of the origin airport
+            destination_airport: The airport code of the destination airport
+            scheduled_departure_time: The scheduled departure time
+            scheduled_arrival_time: The scheduled arrival time
+            actual_departure_time: The actual departure time
+            actual_arrival_time: The actual arrival time
+            wheels_off_time: The time the wheels left the ground
+            wheels_on_time: The time the wheels touched the ground
+        incoming_schedule_df: same as above
+        device: The device to use for the tensors
+
+    Returns:
+        a list of flights, and
+        a list of airports, for both incoming and network
+    """
+    # Get a list of flights
+    network_flights = [
+        parse_flight(row, device=device) 
+        for _, row in network_schedule_df.iterrows()
+    ]
+
+    incoming_flights = [
+        parse_flight(row, device=device) 
+        for _, row in incoming_schedule_df.iterrows()
+    ]
+
+    # Get a list of unique airport codes for flight origins
+    network_airport_codes = network_schedule_df["origin_airport"].unique()
+    source_airport_codes = incoming_schedule_df["origin_airport"].unique()
+
+    # Create an airport object for each airport code in network
+    network_airports = [Airport(code) for code in network_airport_codes]
+    source_supernode = SourceSupernode(source_airport_codes)
+
+    return (
+        network_flights, network_airports,
+        incoming_flights, source_supernode,
+    )
+    
+
+def split_and_parse_full_schedule(
+    schedule_df: Schedule,
+    network_airport_codes: list[AirportCode],
+    device=None
+) -> tuple[
+    list[Flight], list[Flight], 
+    list[Flight], list[Flight]
+]:
+    network_schedule_df, incoming_schedule_df = \
+        split_full_schedule(schedule_df, network_airport_codes)
+    
+    return parse_split_schedule(
+        network_schedule_df, incoming_schedule_df, device
+    )
