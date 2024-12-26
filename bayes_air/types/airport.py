@@ -69,6 +69,8 @@ class Airport:
     available_aircraft: list[Time] = field(default_factory=list)
     last_departure_time: Time = field(default_factory=lambda: Time(0.0))
 
+    obs_none: bool = field(default_factory=lambda: False)
+
     def update_available_aircraft(self, time: Time) -> None:
         """Update the number of available aircraft by checking the turnaround queue.
 
@@ -90,7 +92,7 @@ class Airport:
         self.turnaround_queue = new_turnaround_queue
 
     def update_runway_queue(
-        self, time: Time, var_prefix: str = ""
+        self, time: Time, var_prefix: str = "",
     ) -> tuple[list[Flight], list[Flight]]:
         """Update the runway queue by removing flights that have been serviced.
 
@@ -184,7 +186,8 @@ class Airport:
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
             ),
-            obs=queue_entry.flight.actual_departure_time,
+            obs=queue_entry.flight.actual_departure_time
+            if not self.obs_none else None,
         )
 
         # print(
@@ -206,7 +209,8 @@ class Airport:
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
             ),
-            obs=queue_entry.flight.actual_arrival_time,
+            obs=queue_entry.flight.actual_arrival_time
+            if not self.obs_none else None,
         )
 
         # print(
@@ -249,6 +253,8 @@ class SourceSupernode:
     # departure queue is for each destination airport!
     last_departure_time: Time = field(default_factory=lambda: Time(0.0)) # unused?
     runway_use_time_std_dev: Time = field(default_factory=lambda: Time(1.0))
+
+    obs_none: bool = field(default_factory=lambda: False)
 
     def __post_init__(self):
         # initialize departure queues
@@ -302,14 +308,18 @@ class SourceSupernode:
             queue_entry: The queue entry for the flight to assign a departure time to.
             var_prefix: prefix for sampled variable names.
         """
-        departure_queue_entry.flight.simulated_departure_time = pyro.sample(
-            var_prefix + str(departure_queue_entry.flight) + "_simulated_departure_time",
-            dist.Normal(
-                departure_queue_entry.approved_time,
-                self.runway_use_time_std_dev,
-            ),
-            obs=departure_queue_entry.flight.actual_departure_time,
-        )
+        # departure_queue_entry.flight.simulated_departure_time = pyro.sample(
+        #     var_prefix + str(departure_queue_entry.flight) + "_simulated_departure_time",
+        #     dist.Normal(
+        #         departure_queue_entry.approved_time,
+        #         self.runway_use_time_std_dev,
+        #     ),
+        # )
+        dep_time = departure_queue_entry.flight.actual_departure_time
+        crs_dep_time = departure_queue_entry.flight.scheduled_departure_time
+        departure_queue_entry.flight.simulated_departure_time = \
+            dep_time if dep_time is not None else crs_dep_time
+            # departure_queue_entry.approved_time
 
         # print(
         #     f"\t{queue_entry.flight} departing at {queue_entry.flight.simulated_departure_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"

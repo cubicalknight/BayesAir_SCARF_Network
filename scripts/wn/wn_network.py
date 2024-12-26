@@ -312,9 +312,9 @@ def train(
             wandb.log({"Mean service times": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-            fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
-            wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
+            # fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
+            # wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
+            # plt.close(fig)
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)

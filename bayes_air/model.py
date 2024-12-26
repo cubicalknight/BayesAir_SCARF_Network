@@ -6,7 +6,7 @@ import pyro.distributions as dist
 import torch
 
 from bayes_air.network import NetworkState, AugmentedNetworkState
-from bayes_air.types import QueueEntry, DepartureQueueEntry
+from bayes_air.types import QueueEntry, DepartureQueueEntry, AirportCode
 
 FAR_FUTURE_TIME = 30.0
 
@@ -214,10 +214,12 @@ def air_traffic_network_model(
 
 def augmented_air_traffic_network_model(
     states: list[AugmentedNetworkState],
+    empirical_travel_times: dict[tuple[AirportCode, AirportCode], float],
     delta_t: float = 0.1,
     max_t: float = FAR_FUTURE_TIME,
     device=None,
     include_cancellations: bool = False,
+    obs_none: bool = False,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -225,7 +227,7 @@ def augmented_air_traffic_network_model(
     Args:
         states: the starting states of the simulation (will run an independent
             simulation from each start state). All states must include the same
-            airports.
+            airports.x
         delta_t: the time resolution of the simulation, in hours
         max_t: the maximum time to simulate, in hours
         device: the device to run the simulation on
@@ -237,6 +239,12 @@ def augmented_air_traffic_network_model(
 
     # Copy state to avoid modifying it
     states = deepcopy(states)
+
+    # set obs_none flags
+    if obs_none:
+        for state in states:
+            state.obs_none = obs_none
+            state.sync_child_obs_none()
 
     # Define system-level parameters
     runway_use_time_std_dev = pyro.param(
@@ -258,21 +266,23 @@ def augmented_air_traffic_network_model(
     # Sample latent variables for airports in network
     network_airport_codes = states[0].network_state.airports.keys()
     airport_turnaround_times = {
-        code: pyro.sample(
-            f"{code}_mean_turnaround_time",
-            dist.Gamma(
-                torch.tensor(1.0, device=device), 
-                torch.tensor(2.0, device=device)
-            ),
-        )
+        # code: pyro.sample(
+        #     f"{code}_mean_turnaround_time",
+        #     dist.Gamma(
+        #         torch.tensor(1.0, device=device), 
+        #         torch.tensor(2.0*30, device=device)
+        #     ),
+        # )
+        code: 0.1
         for code in network_airport_codes
     }
+    shape = 1.0
     airport_service_times = {
         code: pyro.sample(
             f"{code}_mean_service_time",
             dist.Gamma(
-                torch.tensor(1.5, device=device), 
-                torch.tensor(10.0, device=device)
+                torch.tensor(shape, device=device), 
+                torch.tensor(shape*80, device=device)
             ),
         )
         for code in network_airport_codes
@@ -327,16 +337,32 @@ def augmented_air_traffic_network_model(
         }
 
     # sample latent variables for variables outside network
-    incoming_airport_codes = states[0].source_supernode.source_codes
+    incoming_airport_codes = set()
+    for state in states:
+        current_codes = state.source_supernode.source_codes
+        incoming_airport_codes.update(current_codes)
+    incoming_airport_codes = list(incoming_airport_codes)
+
     # TODO: make this context instead of latent? like add the obs thing
+    # trying something
+    shape = 4.0
     incoming_travel_times = {
-        (origin, destination): pyro.sample(
-            f"travel_time_{origin}_{destination}",
-            dist.Gamma(
-                torch.tensor(4.0, device=device), 
-                torch.tensor(1.25, device=device)
-            ),
-        )
+        (origin, destination): 
+            pyro.sample(
+                f"travel_time_{origin}_{destination}",
+                # dist.Gamma(
+                #     torch.tensor(4.0, device=device), 
+                #     torch.tensor(1.25, device=device)
+                # )
+                dist.Gamma(
+                    torch.tensor(shape, device=device),
+                    torch.tensor(
+                        shape / 
+                        (.9 * empirical_travel_times[(origin, destination)])
+                    , device=device)
+                )
+            )
+            # .9 * empirical_travel_times[(origin, destination)]
         for origin in incoming_airport_codes
         for destination in network_airport_codes
     }
@@ -348,7 +374,8 @@ def augmented_air_traffic_network_model(
     # for day_ind in pyro.plate("days", len(states)):
     for day_ind in pyro.markov(range(len(states)), history=1):
         state = states[day_ind]
-        var_prefix = f"day{day_ind}_"
+        # var_prefix = f"day{day_ind}_"
+        var_prefix = f"{state.day_str}_"
 
         # print(f"============= Starting day {day_ind} =============")
         # print(f"# pending flights: {len(state.pending_flights)}")
