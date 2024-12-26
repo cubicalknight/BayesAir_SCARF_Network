@@ -49,13 +49,13 @@ def load_remapped_data_bts(
     data_dir = script_dir.parent.parent / 'data'
     remapped_dir = data_dir / 'bts_remapped/lga_reduced_1995-2019_clean_daily/parquet'
 
-    data = []
+    data = {}
 
     for date in dates:
         year, month, day = f'{date.year:04d}', f'{date.month:02d}', f'{date.day:02d}'
         df_path = remapped_dir / f'{year}/{month}/lga_reduced_{year}_{month}_{day}_clean.parquet'
         df = pd.read_parquet(df_path)
-        data.append(df)
+        data[date.strftime('%Y-%m-%d')] = df
     
     return data
 

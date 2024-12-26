@@ -36,8 +36,8 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
     actual_arrival_time = schedule_row["actual_arrival_time"]
     wheels_off_time = schedule_row["wheels_off_time"]
     wheels_on_time = schedule_row["wheels_on_time"]
-    is_incoming_flight = schedule_row["is_incoming_flight"]
-    is_outgoing_flight = schedule_row["is_outgoing_flight"]
+    is_incoming_flight = schedule_row.get("is_incoming_flight")
+    is_outgoing_flight = schedule_row.get("is_outgoing_flight")
     cancelled = (
         torch.tensor(1.0, device=device)
         if schedule_row["cancelled"]
@@ -70,8 +70,12 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
         wheels_on_time=Time(wheels_on_time).to(device)
         if wheels_on_time is not None
         else None,
-        is_incoming_flight=is_incoming_flight,
-        is_outgoing_flight=is_outgoing_flight,
+        is_incoming_flight=is_incoming_flight
+        if is_incoming_flight is not None
+        else False,
+        is_outgoing_flight=is_outgoing_flight
+        if is_outgoing_flight is not None
+        else False,
     )
 
 

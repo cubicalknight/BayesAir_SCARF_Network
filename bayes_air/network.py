@@ -1,6 +1,6 @@
 """Define the network model"""
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Union, Optional
 
 import pyro
 import pyro.distributions as dist
@@ -35,9 +35,15 @@ class NetworkState:
     in_transit_flights: list[tuple[Flight, Time]] = field(default_factory=list)
     completed_flights: list[Flight] = field(default_factory=list)
 
+    obs_none: bool = field(default_factory=lambda: False)
+
     def __post_init__(self):
         # Sort pending flights by scheduled departure time
         self.pending_flights.sort(key=lambda flight: flight.scheduled_departure_time)
+
+    def sync_child_obs_none(self):
+        for airport in self.airports.values():
+            airport.obs_none = self.obs_none
 
     @property
     def complete(self):
@@ -113,7 +119,8 @@ class NetworkState:
                             torch.tensor(0.5),  # temperature
                             probs=cancellation_probability,
                         ),
-                        obs=flight.actually_cancelled,
+                        obs=flight.actually_cancelled 
+                        if not self.obs_none else None
                     )
 
                 if flight.simulated_cancelled == 0:
@@ -219,6 +226,7 @@ class NetworkState:
 @dataclass
 class AugmentedNetworkState():
 
+    day_str: str
     network_state: NetworkState
     source_supernode: SourceSupernode
 
@@ -228,11 +236,18 @@ class AugmentedNetworkState():
     completed_outgoing_flights: list[Flight] = field(default_factory=list)
     # completed incoming flights can be added to network state
 
+    obs_none: bool = field(default_factory=lambda: False)
+
     ### setup / utility ###
 
     def __post_init__(self):
         # Sort pending flights by scheduled departure time
         self.pending_incoming_flights.sort(key=lambda flight: flight.scheduled_departure_time)
+
+    def sync_child_obs_none(self):
+        self.source_supernode.obs_none = self.obs_none
+        self.network_state.obs_none = self.obs_none
+        self.network_state.sync_child_obs_none()
 
     @property
     def complete(self):
