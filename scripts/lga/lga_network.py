@@ -280,11 +280,13 @@ def plot_elbo_losses(losses):
 
     return fig
 
-def plot_rmses(arr_rmses, dep_rmses, rmse_idxs):
+def plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs):
 
     fig = plt.figure(figsize=(8, 8))
     plt.plot(rmse_idxs, arr_rmses, "-b", label="arrivals RMSE")
     plt.plot(rmse_idxs, dep_rmses, "-r", label="departures RMSE")
+    plt.plot(rmse_idxs, arr_rmses_adj, "-b", label="arrivals RMSE (excluding worst 2.5%)")
+    plt.plot(rmse_idxs, dep_rmses_adj, "-r", label="departures RMSE (excluding worst 2.5%)")
     plt.title("RMSE of arrival and departure times for flights at LGA")
     plt.xlabel("iteration")
     plt.ylabel("loss")
@@ -405,17 +407,32 @@ def get_arrival_departures_rmses(
     departures_mse = departures_df["squared_dist"].mean()
     departures_rmse = np.sqrt(departures_mse)
 
-    print(arrivals_df)
-    print(departures_df)
+    arr_n_ignore = int(len(arrivals_df) * 0.025)
+    arrivals_mse_adj = arrivals_df.drop(
+        arrivals_df.nlargest(arr_n_ignore, "squared_dist").index
+        )["squared_dist"].mean()
+    arrivals_rmse_adj = np.sqrt(arrivals_mse_adj)
 
-    print(arrivals_df.nlargest(10, columns=['squared_dist']))
-    print(departures_df.nlargest(10, columns=['squared_dist']))
+    dep_n_ignore = int(len(departures_df) * 0.025)
+    departures_mse_adj = departures_df.drop(
+        departures_df.nlargest(dep_n_ignore, "squared_dist").index
+        )["squared_dist"].mean()
+    departures_rmse_adj = np.sqrt(departures_mse_adj)
+
+    # print(arrivals_df)
+    # print(departures_df)
+
+    # print(arrivals_df.nlargest(10, columns=['squared_dist']))
+    # print(departures_df.nlargest(10, columns=['squared_dist']))
 
     print(arrivals_mse, departures_mse)
     print(arrivals_rmse, departures_rmse)
-    exit()
 
-    return arrivals_rmse, departures_rmse
+    print(arrivals_mse_adj, departures_mse_adj)
+    print(arrivals_rmse_adj, departures_rmse_adj)
+    # exit()
+
+    return arrivals_rmse, departures_rmse, arrivals_rmse_adj, departures_rmse_adj
 
 
 
@@ -527,8 +544,8 @@ def train(
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
     # Create an autoguide for the model
-    # auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
-    auto_guide = pyro.infer.autoguide.AutoDelta(model)
+    auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
+    # auto_guide = pyro.infer.autoguide.AutoDelta(model)
 
     # Set up SVI
     gamma = 0.1  # final learning rate will be gamma * initial_lr
@@ -559,6 +576,8 @@ def train(
     losses = []
     arr_rmses = []
     dep_rmses = []
+    arr_rmses_adj = []
+    dep_rmses_adj = []
     rmse_idxs = []
     rmses_record_every = 10
     pbar = tqdm.tqdm(range(svi_steps))
@@ -569,11 +588,14 @@ def train(
         pbar.set_description(f"ELBO loss: {loss:.2f}")
 
         if i % rmses_record_every == 0 or i == svi_steps - 1:
-            arr_rmse, dep_rmse = get_arrival_departures_rmses(
+            arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj = \
+            get_arrival_departures_rmses(
                 model, auto_guide, states, travel_times_dict, dt, observations_df, 5
             )
             arr_rmses.append(arr_rmse)
             dep_rmses.append(dep_rmse)
+            arr_rmses_adj.append(arr_rmse_adj)
+            dep_rmses_adj.append(dep_rmse_adj)
             rmse_idxs.append(i)
 
         if i % plot_every == 0 or i == svi_steps - 1:
@@ -590,7 +612,7 @@ def train(
             plt.close(fig)
 
             # print(arr_rmses, dep_rmses, rmse_idxs)
-            fig = plot_rmses(arr_rmses, dep_rmses, rmse_idxs)
+            fig = plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs)
             wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
