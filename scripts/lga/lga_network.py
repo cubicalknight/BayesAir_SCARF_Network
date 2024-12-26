@@ -331,11 +331,11 @@ def get_arrival_departures_rmses(
             continue
 
         if split_key[-2] == 'arrival':
-            arr_sample = sample.mean()
+            arr_sample = sample.mean().item()
             dep_sample = None
         elif split_key[-2] == 'departure':
             arr_sample = None
-            dep_sample = sample.mean()
+            dep_sample = sample.mean().item()
         else:
             continue
 
@@ -405,11 +405,15 @@ def get_arrival_departures_rmses(
     departures_mse = departures_df["squared_dist"].mean()
     departures_rmse = np.sqrt(departures_mse)
 
-    # print(arrivals_df)
-    # print(departures_df)
+    print(arrivals_df)
+    print(departures_df)
 
-    # print(arrivals_mse, departures_mse)
-    # print(arrivals_rmse, departures_rmse)
+    print(arrivals_df.nlargest(10, columns=['squared_dist']))
+    print(departures_df.nlargest(10, columns=['squared_dist']))
+
+    print(arrivals_mse, departures_mse)
+    print(arrivals_rmse, departures_rmse)
+    exit()
 
     return arrivals_rmse, departures_rmse
 
@@ -488,7 +492,8 @@ def train(
     # print(travel_times_dict)
     # exit()
 
-    observations_df = all_data_df[
+    observations_df = all_data_df.loc[
+        ~all_data_df["cancelled"],
         ["date", "flight_number", 
          "origin_airport", "destination_airport", 
          "actual_arrival_time", "actual_departure_time"]
@@ -522,8 +527,8 @@ def train(
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
     # Create an autoguide for the model
-    auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
-    # auto_guide = pyro.infer.autoguide.AutoDelta(model)
+    # auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
+    auto_guide = pyro.infer.autoguide.AutoDelta(model)
 
     # Set up SVI
     gamma = 0.1  # final learning rate will be gamma * initial_lr
@@ -555,7 +560,7 @@ def train(
     arr_rmses = []
     dep_rmses = []
     rmse_idxs = []
-    rmses_record_every = 20
+    rmses_record_every = 10
     pbar = tqdm.tqdm(range(svi_steps))
     for i in pbar:
         loss = svi.step(states, travel_times_dict, dt)
@@ -584,7 +589,7 @@ def train(
             wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-            print(arr_rmses, dep_rmses, rmse_idxs)
+            # print(arr_rmses, dep_rmses, rmse_idxs)
             fig = plot_rmses(arr_rmses, dep_rmses, rmse_idxs)
             wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
             plt.close(fig)
