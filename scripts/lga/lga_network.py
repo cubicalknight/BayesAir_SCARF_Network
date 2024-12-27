@@ -428,18 +428,17 @@ def get_arrival_departures_rmses(
     )
     departures_rmse_adj = np.sqrt(departures_mse_adj)
 
-    # print(arrivals_df)
-    # print(departures_df)
-
-    # print(arrivals_df.nlargest(10, columns=['squared_dist']))
-    # print(departures_df.nlargest(10, columns=['squared_dist']))
+    print(arrivals_df)
+    print(departures_df)
+    print(arrivals_df.nlargest(20, columns=['squared_dist']))
+    print(departures_df.nlargest(20, columns=['squared_dist']))
 
     print(arrivals_mse, departures_mse)
     print(arrivals_rmse, departures_rmse)
-
     print(arrivals_mse_adj, departures_mse_adj)
     print(arrivals_rmse_adj, departures_rmse_adj)
-    # exit()
+
+    exit()
 
     return arrivals_rmse, departures_rmse, arrivals_rmse_adj, departures_rmse_adj
 
