@@ -285,8 +285,8 @@ def plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs):
     fig = plt.figure(figsize=(8, 8))
     plt.plot(rmse_idxs, arr_rmses, "-b", label="arrivals RMSE")
     plt.plot(rmse_idxs, dep_rmses, "-r", label="departures RMSE")
-    plt.plot(rmse_idxs, arr_rmses_adj, "-b", label="arrivals RMSE (excluding worst 2.5%)")
-    plt.plot(rmse_idxs, dep_rmses_adj, "-r", label="departures RMSE (excluding worst 2.5%)")
+    plt.plot(rmse_idxs, arr_rmses_adj, ":b", label="arrivals RMSE (excluding worst 2.5%)")
+    plt.plot(rmse_idxs, dep_rmses_adj, ":r", label="departures RMSE (excluding worst 2.5%)")
     plt.title("RMSE of arrival and departure times for flights at LGA")
     plt.xlabel("iteration")
     plt.ylabel("loss")
@@ -467,7 +467,7 @@ def train(
         days_str = [
             f"2019-07-{day:02d}"
             for day in [
-                1,#4,5,
+                1,4,5,
                 # 1,4,5,9,10, #2,3
                 # 14,15,24,25,28
             ]
