@@ -47,7 +47,7 @@ def load_remapped_data_bts(
         dates: pd.DatetimeIndex) -> list[pd.DataFrame]:
     script_dir = Path(__file__).parent 
     data_dir = script_dir.parent.parent / 'data'
-    remapped_dir = data_dir / 'bts_remapped/lga_reduced_1995-2019_clean_daily/parquet'
+    remapped_dir = data_dir / 'bts_remapped/lga_reduced_2010-2019_clean_daily/parquet'
 
     data = {}
 
