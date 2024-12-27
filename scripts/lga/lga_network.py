@@ -327,6 +327,7 @@ def get_arrival_departures_rmses(
     destination_airport_list = []
     sample_arrival_time_list = []
     sample_departure_time_list = []
+
     for key, sample in samples.items():
         split_key = key.split('_')
         if split_key[-1] != 'time':
@@ -382,13 +383,15 @@ def get_arrival_departures_rmses(
     arrivals_df = merged_df.loc[
         arr_mask,
         ["date", "flight_number",
-         "sample_arrival_time", "actual_arrival_time"]
+         "sample_arrival_time", 
+         "actual_arrival_time"]
     ]
 
     departures_df = merged_df.loc[
         dep_mask,
         ["date", "flight_number",
-         "sample_departure_time", "actual_departure_time"]
+         "sample_departure_time", 
+         "actual_departure_time"]
     ]
 
     arrivals_df["squared_dist"] = (
@@ -408,15 +411,21 @@ def get_arrival_departures_rmses(
     departures_rmse = np.sqrt(departures_mse)
 
     arr_n_ignore = int(len(arrivals_df) * 0.025)
-    arrivals_mse_adj = arrivals_df.drop(
-        arrivals_df.nlargest(arr_n_ignore, "squared_dist").index
-        )["squared_dist"].mean()
+    arrivals_mse_adj = (
+        arrivals_df
+        .drop(arrivals_df.nlargest(arr_n_ignore, "squared_dist").index)
+        ["squared_dist"]
+        .mean()
+    )
     arrivals_rmse_adj = np.sqrt(arrivals_mse_adj)
 
     dep_n_ignore = int(len(departures_df) * 0.025)
-    departures_mse_adj = departures_df.drop(
-        departures_df.nlargest(dep_n_ignore, "squared_dist").index
-        )["squared_dist"].mean()
+    departures_mse_adj = (
+        departures_df
+        .drop(departures_df.nlargest(dep_n_ignore, "squared_dist").index)
+        ["squared_dist"]
+        .mean()
+    )
     departures_rmse_adj = np.sqrt(departures_mse_adj)
 
     # print(arrivals_df)
@@ -493,27 +502,62 @@ def train(
 
     # Estimate travel times between each pair
     all_data_df = pd.concat(data.values())
-    all_data_df["travel_time"] = (
-        all_data_df["actual_arrival_time"] - all_data_df["actual_departure_time"]
+    all_data_df["actual_travel_time"] = (
+        all_data_df["actual_arrival_time"] 
+        - all_data_df["actual_departure_time"]
     )
+    all_data_df["scheduled_travel_time"] = (
+        all_data_df["scheduled_arrival_time"] 
+        - all_data_df["scheduled_departure_time"]
+    )
+    all_data_df["travel_time"] = np.where(
+        all_data_df["actual_travel_time"] == 0,
+        all_data_df["scheduled_travel_time"], 
+        all_data_df["actual_travel_time"]
+    )
+    # use scheduled as fallback if only actuals are zero
+    all_data_df["travel_time"] = \
+        all_data_df["actual_travel_time"].where(
+            all_data_df["actual_travel_time"] > 0,
+            all_data_df["scheduled_travel_time"].values
+        )
+    
+    # tt_dict_col = "travel_time"
+    tt_dict_col = "scheduled_travel_time"
+
     travel_times = (
-        all_data_df.groupby(["origin_airport", "destination_airport"])["travel_time"]
+        all_data_df
+        .groupby(["origin_airport", "destination_airport"])[tt_dict_col]
         .mean()
         .reset_index()
+        .rename(columns={tt_dict_col:"travel_time"})
     )
-    ignore_routes_mask = ~travel_times["destination_airport"].isin(network_airport_codes)
-    travel_times = travel_times.drop(
-            travel_times[ignore_routes_mask].index
-        ).reset_index(drop=True)
-    travel_times_dict = travel_times.set_index(["origin_airport","destination_airport"])["travel_time"].to_dict()
+    ignore_routes_mask = (
+        ~travel_times["destination_airport"]
+        .isin(network_airport_codes)
+    )
+    travel_times = (
+        travel_times
+        .drop(travel_times[ignore_routes_mask].index)
+        .reset_index(drop=True)
+    )
+    travel_times_dict = (
+        travel_times
+        .set_index(["origin_airport","destination_airport"])
+        ["travel_time"]
+        .to_dict()
+    )
+
     # print(travel_times_dict)
     # exit()
 
     observations_df = all_data_df.loc[
         ~all_data_df["cancelled"],
-        ["date", "flight_number", 
-         "origin_airport", "destination_airport", 
-         "actual_arrival_time", "actual_departure_time"]
+        [
+            "date", "flight_number", 
+            "origin_airport", "destination_airport", 
+            "actual_arrival_time", "actual_departure_time"
+        ]
     ]
 
     # Convert each day into a schedule

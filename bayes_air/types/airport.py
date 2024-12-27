@@ -150,15 +150,16 @@ class Airport:
         var_name += "_departure" if departing else "_arrival"
         var_name += "_service_time"
 
-        if queue_entry.assigned_service_time is not None:
-            print(queue_entry)
-            print(var_name)
-            exit()
-
         service_time = pyro.sample(
             var_name,
-            dist.Exponential(1.0 / self.mean_service_time.reshape(-1)),
-        )
+            dist.Exponential(
+                1.0 / self.mean_service_time.reshape(-1)
+            ),
+        ).squeeze() # TODO: why? some weird shape issue that randomly appears?
+        # is there like something we have to do here when sampling?
+
+        # if service_time.size() != torch.Size([]):
+        #     raise ValueError(service_time)
 
         # Update the waiting times for all aircraft
         for other_queue_entry in self.runway_queue:
