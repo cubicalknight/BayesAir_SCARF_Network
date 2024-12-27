@@ -34,6 +34,7 @@ torchvision = "^0.16.2"
 cartopy = "^0.23.0"
 pyarrow = "^18.1.0"
 fastparquet = "^2024.11.0"
+pyqt6 = "^6.8.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.1.1"
