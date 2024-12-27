@@ -361,7 +361,7 @@ def augmented_air_traffic_network_model(
                         (.9 * empirical_travel_times[(origin, destination)])
                     , device=device)
                 )
-            )
+            ) if empirical_travel_times[(origin, destination)] > 0 else .1
             # .9 * empirical_travel_times[(origin, destination)]
         for origin in incoming_airport_codes
         for destination in network_airport_codes

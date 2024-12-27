@@ -61,12 +61,17 @@ def load_remapped_data_bts(
 
 
 # TODO: add our data and rewrite, option to use remapped
-def remap_all_data_bts(time_res):
+def remap_all_data_bts(
+        start_year=2010,
+        end_year=2019,
+        time_res='daily'
+    ):
     # Get the directory of the current file
     script_dir = Path(__file__).parent 
     data_dir = script_dir.parent.parent / 'data'
-    base_dir = data_dir / f'bts_raw/lga_reduced_1995-2019_clean_{time_res}'
-    out_dir = data_dir / f'bts_remapped/lga_reduced_1995-2019_clean_{time_res}'
+    # unfortunately this is kinda hard-coded for now.. the name structure
+    base_dir = data_dir / f'bts_raw/lga_reduced_{start_year}-{end_year}_clean_{time_res}'
+    out_dir = data_dir / f'bts_remapped/lga_reduced_{start_year}-{end_year}_clean_{time_res}'
     airport_locations_path = data_dir / 'airport_locations.csv'
 
     airport_locations_df = pd.read_csv(airport_locations_path)
@@ -103,7 +108,9 @@ def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
         remapped_df = remap_columns(
                         pd.read_parquet(path), 
                         airport_locations_df,
-                        out_time_zone="EST", 
+                        # TODO: tz currently hard-coded for LGA
+                        # also note that it's differnet from EST...
+                        out_time_zone="America/New_York", 
                         use_bts_columns=True
                     )
         
@@ -285,18 +292,20 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
     if use_bts_columns:
         column_mapping = {
             # comments indicate format expected
-            # (*) indicates additional processing required
-            "Flight_Number_Reporting_Airline": "flight_number", # string
+            # (*) indicates additional processing required. -> uh what did i mean by that?
+            # reordered compared to original, shouldn't matter.
             "FlightDate": "date", # string, like MM/DD/YYYY or MM-DD-YYYY ?
+            "Flight_Number_Reporting_Airline": "flight_number", # string
             "Origin": "origin_airport", # string, IATA code
             "Dest": "destination_airport", # string, IATA code
             "CRSDepTime": "scheduled_departure_time", # (*) integer (HHMM)
             "CRSArrTime": "scheduled_arrival_time", # (*) integer (HHMM)
             "DepTime": "actual_departure_time", # (*) integer (HHMM)
             "ArrTime": "actual_arrival_time", # (*) integer (HHMM)
-            "WheelsOn": "wheels_on_time", # (*) integer (HHMM)
             "WheelsOff": "wheels_off_time", # (*) integer (HHMM)
+            "WheelsOn": "wheels_on_time", # (*) integer (HHMM)
             "Cancelled": "cancelled", # (*) boolean
+            "Diverted": "diverted", # (*) boolean. currently not used but eh
         }
     else: 
         column_mapping = {
@@ -312,6 +321,15 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
             "Wheels Off Time": "wheels_off_time",
             "Cancelled Flight": "cancelled",
         }
+
+    # if using the bts data, we add the carrier code to the flight number
+    # because of uniqueness issues by day ;-;
+    if use_bts_columns:
+        df['Flight_Number_Reporting_Airline'] = (
+            df['Reporting_Airline'].astype(str) 
+            + ':' +
+            df['Flight_Number_Reporting_Airline']
+        )
 
     # Filter the original DataFrame based on the desired columns
     remapped_df = df[column_mapping.keys()]
@@ -346,12 +364,6 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
         right_on="airport_code",
     )
     remapped_df = remapped_df.rename(columns={"time_zone": "destination_time_zone"})
-    # drop duplicate columns
-    remapped_df = remapped_df[
-        remapped_df.columns.drop(
-            list(remapped_df.filter(regex='airport_code'))
-        )
-    ]
 
 
     # Convert "yes/no" to True/False in the cancelled column
@@ -389,8 +401,17 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
     )
     remapped_df["wheels_on_time"] = convert_to_float_hours(
         remapped_df["wheels_on_time"],
-        remapped_df["origin_time_zone"],
+        remapped_df["destination_time_zone"], 
+        # was origin, should be dest though
     )
+
+    # drop the time zone columns and duplicate cols
+    remapped_df = remapped_df[
+        remapped_df.columns.drop(
+            list(remapped_df.filter(regex='airport_code')) + 
+            list(remapped_df.filter(regex='time_zone'))
+        )
+    ]
 
     # If a flight is en-route at midnight, it's duration will be negative unless we add 24 hours
     # to the actual and scheduled arrival times
@@ -439,6 +460,11 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
     # Convert date to datetime type
     remapped_df["date"] = pd.to_datetime(remapped_df["date"])
 
+    # sort by date and scheduled departure time
+    remapped_df = remapped_df.sort_values(
+        ['date', 'scheduled_departure_time'],
+        ascending=[True, True]).reset_index(drop=True)
+
     return remapped_df
 
 
@@ -468,7 +494,7 @@ def top_N_df(df, number_of_airports: int):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    remap_all_data_bts('daily')
+    remap_all_data_bts()
 
 
 

@@ -149,6 +149,12 @@ class Airport:
         var_name = var_prefix + str(queue_entry.flight)
         var_name += "_departure" if departing else "_arrival"
         var_name += "_service_time"
+
+        if queue_entry.assigned_service_time is not None:
+            print(queue_entry)
+            print(var_name)
+            exit()
+
         service_time = pyro.sample(
             var_name,
             dist.Exponential(1.0 / self.mean_service_time.reshape(-1)),
