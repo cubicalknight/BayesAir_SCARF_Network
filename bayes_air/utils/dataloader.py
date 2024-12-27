@@ -276,7 +276,10 @@ def time_zone_for_airports(airport_codes, airport_locations_df):
     return time_zones
 
 
-def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns=False):
+def remap_columns(
+        df, airport_locations_df, out_time_zone="UTC", 
+        use_bts_columns=False,
+    ):
     """Remap columns in the DataFrame to the names that we expect.
 
     Args:
@@ -296,16 +299,30 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
             # reordered compared to original, shouldn't matter.
             "FlightDate": "date", # string, like MM/DD/YYYY or MM-DD-YYYY ?
             "Flight_Number_Reporting_Airline": "flight_number", # string
+            "Tail_Number": "tail_number", # sometimes missing
+
             "Origin": "origin_airport", # string, IATA code
             "Dest": "destination_airport", # string, IATA code
+
             "CRSDepTime": "scheduled_departure_time", # (*) integer (HHMM)
             "CRSArrTime": "scheduled_arrival_time", # (*) integer (HHMM)
             "DepTime": "actual_departure_time", # (*) integer (HHMM)
             "ArrTime": "actual_arrival_time", # (*) integer (HHMM)
             "WheelsOff": "wheels_off_time", # (*) integer (HHMM)
             "WheelsOn": "wheels_on_time", # (*) integer (HHMM)
+
+            'CarrierDelay': 'carrier_delay',
+            'WeatherDelay': 'weather_delay', 
+            'NASDelay': 'nas_delay', 
+            'SecurityDelay': 'security_delay', 
+            'LateAircraftDelay': 'late_aircraft_delay',
+
             "Cancelled": "cancelled", # (*) boolean
-            "Diverted": "diverted", # (*) boolean. currently not used but eh
+            "CancellationCode": "cancellation_code", 
+
+            "Diverted": "diverted",
+            "DivReachedDest": "diverted_reached_destination",
+            "DivAirportLandings": "diverted_airport_landings",
         }
     else: 
         column_mapping = {
@@ -456,6 +473,33 @@ def remap_columns(df, airport_locations_df, out_time_zone="UTC", use_bts_columns
         departure_delay < -3.0,
         "actual_arrival_time",
     ] += 24  # Add 24 hours to actual arrival time
+
+    # add delay columns
+    departure_delay = (
+        remapped_df.actual_departure_time - remapped_df.scheduled_departure_time
+    )
+    arrival_delay = (
+        remapped_df.actual_arrival_time - remapped_df.scheduled_arrival_time
+    )
+
+    split_delay_cols = [ # in order
+        "carrier_delay",
+        "weather_delay",
+        "nas_delay",
+        "security_delay",
+        "late_aircraft_delay"
+    ]
+
+    # insert the total delay cols before the split ones
+    idx = remapped_df.columns.get_loc(split_delay_cols[0])
+    remapped_df.insert(idx, "departure_delay", departure_delay)
+    remapped_df.insert(idx + 1, "arrival_delay", arrival_delay)
+    # TODO: should we have special value for cancelled and failed diversions?
+
+    # convert split delay columns to hours
+    remapped_df[split_delay_cols] = (
+        remapped_df[split_delay_cols].astype(float) / 60.0
+    )
 
     # Convert date to datetime type
     remapped_df["date"] = pd.to_datetime(remapped_df["date"])
