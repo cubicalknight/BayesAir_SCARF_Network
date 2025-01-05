@@ -178,7 +178,7 @@ class Airport:
 
     def _assign_departure_time(
         self,
-        queue_entry: DepartureQueueEntry,
+        queue_entry: QueueEntry,
         var_prefix: str = "",
     ) -> None:
         """Sample a random departure time for a flight that is using the runway.
@@ -187,14 +187,17 @@ class Airport:
             queue_entry: The queue entry for the flight to assign a departure time to.
             var_prefix: prefix for sampled variable names.
         """
+
+        var_name = var_prefix + str(queue_entry.flight) + "_simulated_departure_time"
+        obs = queue_entry.flight.actual_departure_time if not self.obs_none else None
+
         queue_entry.flight.simulated_departure_time = pyro.sample(
-            var_prefix + str(queue_entry.flight) + "_simulated_departure_time",
+            var_name,
             dist.Normal(
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
             ),
-            obs=queue_entry.flight.actual_departure_time
-            if not self.obs_none else None,
+            obs=obs
         )
 
         # print(
@@ -202,7 +205,9 @@ class Airport:
         # )
 
     def _assign_arrival_time(
-        self, queue_entry: DepartureQueueEntry, var_prefix: str = ""
+        self, 
+        queue_entry: QueueEntry, 
+        var_prefix: str = "",
     ) -> None:
         """Sample a random arrival time for a flight that is using the runway.
 
@@ -210,16 +215,19 @@ class Airport:
             queue_entry: The queue entry for the flight to assign a arrival time to.
             var_prefix: prefix for sampled variable names.
         """
+
+        var_name = var_prefix + str(queue_entry.flight) + "_simulated_arrival_time"
+        obs = queue_entry.flight.actual_arrival_time if not self.obs_none else None
+
         queue_entry.flight.simulated_arrival_time = pyro.sample(
-            var_prefix + str(queue_entry.flight) + "_simulated_arrival_time",
+            var_name,
             dist.Normal(
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
             ),
-            obs=queue_entry.flight.actual_arrival_time
-            if not self.obs_none else None,
+            obs=obs,
         )
-
+            
         # print(
         #     f"\t{queue_entry.flight} arriving at {queue_entry.flight.simulated_arrival_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
         # )
@@ -326,12 +334,18 @@ class SourceSupernode:
         crs_dep_time = departure_queue_entry.flight.scheduled_departure_time
         carrier_delay = departure_queue_entry.flight.carrier_delay
         late_aircraft_delay = departure_queue_entry.flight.late_aircraft_delay
+        security_delay = departure_queue_entry.flight.security_delay
+
+        # if departure_queue_entry.flight.flight_number == 'DL:2358' \
+        #     and departure_queue_entry.flight.destination == 'LGA':
+        #     print(crs_dep_time, carrier_delay, late_aircraft_delay)
 
         departure_queue_entry.flight.simulated_departure_time = (
-            crs_dep_time + torch.maximum(
-                carrier_delay + late_aircraft_delay,
-                0.0 # TODO: replace with ground delay thing
-            )
+            crs_dep_time + carrier_delay + late_aircraft_delay + security_delay
+            # crs_dep_time + torch.maximum(
+            #     carrier_delay + late_aircraft_delay,
+            #     carrier_delay # TODO: replace with ground delay stuff here?
+            # )
         )
 
         # print(

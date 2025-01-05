@@ -39,7 +39,11 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
 
     cancelled = schedule_row["cancelled"]
     diverted = schedule_row["diverted"]
-    diverted_reached_destination = schedule_row["diverted_reached_destination"]
+    diverted_reached_destination = (
+        schedule_row["diverted_reached_destination"] 
+        if pd.notna(schedule_row["diverted_reached_destination"])
+        else False
+    )
     
     is_incoming_flight = schedule_row.get("is_incoming_flight")
     is_outgoing_flight = schedule_row.get("is_outgoing_flight")

@@ -4,6 +4,7 @@ from typing import Union, Optional
 
 import pyro
 import pyro.distributions as dist
+import pyro.distributions
 import torch
 
 from bayes_air.types import (
@@ -140,6 +141,8 @@ class NetworkState:
                             )
                         )
                 else:
+                    # also just give a zero sample so predictive doesn't error??
+                    self._assign_times_cancel(flight, var_prefix)
                     # print(f"{flight} cancelled")
                     self.completed_flights.append(flight)
 
@@ -147,6 +150,28 @@ class NetworkState:
         self.pending_flights = new_pending_flights
 
         return ready_to_depart_flights, ready_times
+    
+    def _assign_times_cancel(
+        self,
+        flight: Flight,
+        var_prefix: str = "",
+    ):
+
+        default_device = flight.scheduled_departure_time.device
+        def zero_sample(suffix, device=default_device):
+            pyro.deterministic(
+                var_prefix + str(flight) + suffix,
+                Time(0.0).to(device)
+            )
+
+        zero_sample("_simulated_departure_time")
+        zero_sample("_departure_service_time")
+
+        if not flight.is_outgoing_flight:
+            zero_sample("_simulated_arrival_time")
+            zero_sample("_arrival_service_time")
+
+
 
     def add_in_transit_flights(
         self,

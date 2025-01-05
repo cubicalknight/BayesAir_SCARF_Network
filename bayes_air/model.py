@@ -218,7 +218,7 @@ def augmented_air_traffic_network_model(
     delta_t: float = 0.1,
     max_t: float = FAR_FUTURE_TIME,
     device=None,
-    include_cancellations: bool = False,
+    include_cancellations: bool = True,
     obs_none: bool = False,
 ):
     """
@@ -343,7 +343,6 @@ def augmented_air_traffic_network_model(
         incoming_airport_codes.update(current_codes)
     incoming_airport_codes = list(incoming_airport_codes)
 
-    # TODO: make this context instead of latent? like add the obs thing
     # trying something
     shape = 4.0
     incoming_travel_times = {
@@ -368,6 +367,8 @@ def augmented_air_traffic_network_model(
     }
 
     travel_times = network_travel_times | incoming_travel_times
+    airport_initial_available_aircraft = network_airport_initial_available_aircraft
+    airport_base_cancel_prob = network_airport_base_cancel_prob
 
     # Simulate for each state
     output_states = []
