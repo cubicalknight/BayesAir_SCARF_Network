@@ -266,17 +266,16 @@ def augmented_air_traffic_network_model(
     # Sample latent variables for airports in network
     network_airport_codes = states[0].network_state.airports.keys()
     airport_turnaround_times = {
-        # code: pyro.sample(
-        #     f"{code}_mean_turnaround_time",
-        #     dist.Gamma(
-        #         torch.tensor(1.0, device=device), 
-        #         torch.tensor(2.0*30, device=device)
-        #     ),
-        # )
-        code: 0.1
+        code: pyro.sample(
+            f"{code}_mean_turnaround_time",
+            dist.Gamma(
+                torch.tensor(1.0, device=device), 
+                torch.tensor(2.0, device=device)
+            ),
+        )
         for code in network_airport_codes
     }
-    shape = 1.0
+    shape = .2
     airport_service_times = {
         code: pyro.sample(
             f"{code}_mean_service_time",
@@ -350,9 +349,10 @@ def augmented_air_traffic_network_model(
             pyro.sample(
                 f"travel_time_{origin}_{destination}",
                 # dist.Gamma(
-                #     torch.tensor(4.0, device=device), 
-                #     torch.tensor(1.25, device=device)
+                #     torch.tensor(2.0, device=device), 
+                #     torch.tensor(0.5, device=device)
                 # )
+                # TODO: should actually be based on scheduled times, come to think of it
                 dist.Gamma(
                     torch.tensor(shape, device=device),
                     torch.tensor(

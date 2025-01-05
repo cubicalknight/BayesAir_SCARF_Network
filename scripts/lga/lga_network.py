@@ -392,11 +392,11 @@ def get_arrival_departures_rmses(
     )
 
     split_delay_cols = [
-        # "carrier_delay", 
-        "weather_delay", 
+        "carrier_delay", 
+        # "weather_delay", 
         "nas_delay", 
         # "security_delay", 
-        # "late_aircraft_delay",
+        "late_aircraft_delay",
     ]
 
     arrivals_df = merged_df.loc[
@@ -451,21 +451,139 @@ def get_arrival_departures_rmses(
 
     # print(arrivals_df)
     # print(departures_df)
-    print(arrivals_df.nlargest(20, columns=['squared_dist']).to_string(index=False))
+    print(arrivals_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
     print("")
-    print(departures_df.nlargest(20, columns=['squared_dist']).to_string(index=False))
+    print(departures_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
 
     print("")
-    print(arrivals_mse, departures_mse)
+    # print(arrivals_mse, departures_mse)
     print(arrivals_rmse, departures_rmse)
     print("")
-    print(arrivals_mse_adj, departures_mse_adj)
+    # print(arrivals_mse_adj, departures_mse_adj)
     print(arrivals_rmse_adj, departures_rmse_adj)
 
-    # exit()
 
-    return arrivals_rmse, departures_rmse, arrivals_rmse_adj, departures_rmse_adj
+    arrival_delays_df = merged_df.loc[
+        arr_mask,
+        ["date", "flight_number",
+         "sample_arrival_time", 
+         "actual_arrival_time",
+         "scheduled_arrival_time"]
+    ]
 
+    arrival_delays_df["sample_arrival_delay"] = (
+        arrival_delays_df["sample_arrival_time"] 
+        - arrival_delays_df["scheduled_arrival_time"]
+    )
+    arrival_delays_df["actual_arrival_delay"] = (
+        arrival_delays_df["actual_arrival_time"] 
+        - arrival_delays_df["scheduled_arrival_time"]
+    )
+
+    actual_arrival_hour = (
+        np.floor(arrival_delays_df.actual_arrival_time).astype(int)
+    )
+    sample_arrival_hour = (
+        np.floor(arrival_delays_df.sample_arrival_time).astype(int)
+    )
+
+    hourly_sample_arrival_delay = (
+        arrival_delays_df
+        .groupby(sample_arrival_hour)
+        ["sample_arrival_delay"]
+        .mean()
+        .loc[:25]
+    )
+    hourly_actual_arrival_delay = (
+        arrival_delays_df
+        .groupby(actual_arrival_hour)
+        ["actual_arrival_delay"]
+        .mean()
+        .loc[:25]
+    )
+
+    departure_delays_df = merged_df.loc[
+        dep_mask,
+        ["date", "flight_number",
+         "sample_departure_time", 
+         "actual_departure_time",
+         "scheduled_departure_time"]
+    ]
+
+    departure_delays_df["sample_departure_delay"] = (
+        departure_delays_df["sample_departure_time"] 
+        - departure_delays_df["scheduled_departure_time"]
+    )
+    departure_delays_df["actual_departure_delay"] = (
+        departure_delays_df["actual_departure_time"] 
+        - departure_delays_df["scheduled_departure_time"]
+    )
+
+    actual_departure_hour = (
+        np.floor(departure_delays_df.actual_departure_time).astype(int)
+    )
+    sample_departure_hour = (
+        np.floor(departure_delays_df.sample_departure_time).astype(int)
+    )
+
+    hourly_sample_departure_delay = (
+        departure_delays_df
+        .groupby(sample_departure_hour)
+        ["sample_departure_delay"]
+        .mean()
+        .loc[:25]
+    )
+    hourly_actual_departure_delay = (
+        departure_delays_df
+        .groupby(actual_departure_hour)
+        ["actual_departure_delay"]
+        .mean()
+        .loc[:25]
+    )
+
+    combined_hourly_delays_df = pd.concat(
+        [
+            hourly_sample_arrival_delay,
+            hourly_actual_arrival_delay,
+            hourly_sample_departure_delay,
+            hourly_actual_departure_delay,
+        ],
+        axis=1,
+    ).sort_index()
+    print(combined_hourly_delays_df)
+
+    # hourly_arrival_delays_rmse = np.sqrt(
+    #     (hourly_sample_arrival_delay - hourly_actual_arrival_delay)**2
+    #     .mean()
+    # )
+    # hourly_departure_delays_rmse = np.sqrt(
+    #     (hourly_sample_departure_delay - hourly_actual_departure_delay)**2
+    #     .mean()
+    # )
+
+    # print(hourly_arrival_delays_rmse, hourly_departure_delays_rmse)
+
+    return (
+        arrivals_rmse, departures_rmse, 
+        arrivals_rmse_adj, departures_rmse_adj,
+        combined_hourly_delays_df
+    )
+
+
+def plot_hourly_delays(df):
+
+    fig = plt.figure(figsize=(8, 8))
+
+    plt.plot(df.index, df.sample_arrival_delay, ":b", label="sample arrival")
+    plt.plot(df.index, df.sample_departure_delay, ":r", label="sample departure")
+    plt.plot(df.index, df.actual_arrival_delay, "-b", label="actual arrival")
+    plt.plot(df.index, df.actual_departure_delay, "-r", label="actual departure")
+    plt.title("hourly mean delay (excluding cancellations?)")
+    plt.xlabel("hour of day")
+    plt.ylabel("delay (hrs)")
+    plt.legend()
+
+    return fig
 
 
 # TODO: deal with all of the above
@@ -579,8 +697,10 @@ def train(
         [
             "date", "flight_number", 
             "origin_airport", "destination_airport", 
-            "actual_arrival_time", "actual_departure_time",
-            "carrier_delay", "weather_delay", "nas_delay", "security_delay", "late_aircraft_delay",
+            "actual_arrival_time", "actual_departure_time", 
+            "scheduled_arrival_time", "scheduled_departure_time",
+            "carrier_delay", "weather_delay", "nas_delay", 
+            "security_delay", "late_aircraft_delay",
         ]
     ]
 
@@ -660,7 +780,7 @@ def train(
         pbar.set_description(f"ELBO loss: {loss:.2f}")
 
         if i % rmses_record_every == 0 or i == svi_steps - 1:
-            arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj = \
+            arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj, hourly_delays = \
             get_arrival_departures_rmses(
                 model, auto_guide, states, travel_times_dict, dt, observations_df, 1
             )
@@ -669,6 +789,10 @@ def train(
             arr_rmses_adj.append(arr_rmse_adj)
             dep_rmses_adj.append(dep_rmse_adj)
             rmse_idxs.append(i)
+            if i % plot_every == 0 or i == svi_steps - 1:
+                fig = plot_hourly_delays(hourly_delays)
+                wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
+                plt.close(fig)
 
         if i % plot_every == 0 or i == svi_steps - 1:
             fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
@@ -688,17 +812,13 @@ def train(
             wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-            # get_arrival_departures_rmses(
-            #     model, auto_guide, states, travel_times_dict, dt, observations_df, 5
-            # )
+            fig = plot_turnaround_times(auto_guide, states, dt, n_samples)
+            wandb.log({"Mean turnaround times": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
 
-            # fig = plot_turnaround_times(auto_guide, states, dt, n_samples)
-            # wandb.log({"Mean turnaround times": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
-
-            # fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
-            # wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
+            fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
+            wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
