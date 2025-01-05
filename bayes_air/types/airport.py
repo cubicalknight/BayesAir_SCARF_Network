@@ -322,11 +322,17 @@ class SourceSupernode:
         #         self.runway_use_time_std_dev,
         #     ),
         # )
-        dep_time = departure_queue_entry.flight.actual_departure_time
+
         crs_dep_time = departure_queue_entry.flight.scheduled_departure_time
-        departure_queue_entry.flight.simulated_departure_time = \
-            dep_time if dep_time is not None else crs_dep_time
-            # departure_queue_entry.approved_time
+        carrier_delay = departure_queue_entry.flight.carrier_delay
+        late_aircraft_delay = departure_queue_entry.flight.late_aircraft_delay
+
+        departure_queue_entry.flight.simulated_departure_time = (
+            crs_dep_time + torch.maximum(
+                carrier_delay + late_aircraft_delay,
+                0.0 # TODO: replace with ground delay thing
+            )
+        )
 
         # print(
         #     f"\t{queue_entry.flight} departing at {queue_entry.flight.simulated_departure_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"

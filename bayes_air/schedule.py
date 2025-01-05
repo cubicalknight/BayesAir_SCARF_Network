@@ -36,46 +36,83 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
     actual_arrival_time = schedule_row["actual_arrival_time"]
     wheels_off_time = schedule_row["wheels_off_time"]
     wheels_on_time = schedule_row["wheels_on_time"]
+
+    cancelled = schedule_row["cancelled"]
+    diverted = schedule_row["diverted"]
+    diverted_reached_destination = schedule_row["diverted_reached_destination"]
+    
     is_incoming_flight = schedule_row.get("is_incoming_flight")
     is_outgoing_flight = schedule_row.get("is_outgoing_flight")
-    cancelled = (
-        torch.tensor(1.0, device=device)
-        if schedule_row["cancelled"]
-        else torch.tensor(0.0, device=device)
-    )
+    # # handle if missing. but shouldn't be ?
+    # if is_incoming_flight is None:
+    #     is_incoming_flight = False
+    # if is_outgoing_flight is None:
+    #     is_outgoing_flight = False
+
+    carrier_delay = schedule_row["carrier_delay"]
+    weather_delay = schedule_row["weather_delay"]
+    nas_delay = schedule_row["nas_delay"]
+    security_delay = schedule_row["weather_delay"]
+    late_aircraft_delay = schedule_row["late_aircraft_delay"]
 
     # If the flight was cancelled, set the measured times to None
-    if schedule_row["cancelled"]:
+    if cancelled:
         actual_departure_time = None
         actual_arrival_time = None
         wheels_off_time = None
         wheels_on_time = None
 
+    # If flight was diverted and didn't reach destination, set measured times to None
+    if diverted and not diverted_reached_destination:
+        actual_arrival_time = None
+        wheels_on_time = None
+    
+    def t_tensor(time):
+        return Time(time).to(device)
+    
+    def obs_tensor(time):
+        return (
+            t_tensor(time)
+            if time is not None 
+            else None
+        )
+    
+    def act_tensor(flag):
+        return (
+            torch.tensor(1.0, device=device)
+            if flag
+            else torch.tensor(0.0, device=device)
+        )
+
     return Flight(
         flight_number=flight_number,
         origin=origin_airport,
         destination=destination_airport,
-        scheduled_departure_time=Time(scheduled_departure_time).to(device),
-        scheduled_arrival_time=Time(scheduled_arrival_time).to(device),
-        actually_cancelled=cancelled,
-        actual_departure_time=Time(actual_departure_time).to(device)
-        if actual_departure_time is not None
-        else None,
-        actual_arrival_time=Time(actual_arrival_time).to(device)
-        if actual_arrival_time is not None
-        else None,
-        wheels_off_time=Time(wheels_off_time).to(device)
-        if wheels_off_time is not None
-        else None,
-        wheels_on_time=Time(wheels_on_time).to(device)
-        if wheels_on_time is not None
-        else None,
-        is_incoming_flight=is_incoming_flight
-        if is_incoming_flight is not None
-        else False,
-        is_outgoing_flight=is_outgoing_flight
-        if is_outgoing_flight is not None
-        else False,
+
+        scheduled_departure_time=t_tensor(scheduled_departure_time),
+        scheduled_arrival_time=t_tensor(scheduled_arrival_time),
+
+        actual_departure_time=obs_tensor(actual_departure_time),
+        actual_arrival_time=obs_tensor(actual_arrival_time),
+        wheels_off_time=obs_tensor(wheels_off_time),
+        wheels_on_time=obs_tensor(wheels_on_time),
+
+        is_incoming_flight=is_incoming_flight,
+        is_outgoing_flight=is_outgoing_flight,
+
+        cancelled=cancelled,
+        diverted=diverted,
+        diverted_reached_destination=diverted_reached_destination,
+
+        actually_cancelled=act_tensor(cancelled),
+        actually_diverted=act_tensor(diverted),
+        actually_diverted_reached_destination=act_tensor(diverted_reached_destination),
+
+        carrier_delay=t_tensor(carrier_delay),
+        weather_delay=t_tensor(weather_delay),
+        nas_delay=t_tensor(nas_delay),
+        security_delay=t_tensor(security_delay),
+        late_aircraft_delay=t_tensor(late_aircraft_delay),
     )
 
 
