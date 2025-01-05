@@ -32,7 +32,15 @@ class Flight:
     destination: AirportCode
     scheduled_departure_time: Time
     scheduled_arrival_time: Time
+
     actually_cancelled: torch.tensor
+    actually_diverted: torch.tensor
+    actually_diverted_reached_destination: torch.tensor
+
+    cancelled: Optional[bool] = False
+    diverted: Optional[bool] = False
+    diverted_reached_destination: Optional[bool] = False
+
     simulated_cancelled: Optional[torch.tensor] = None
     simulated_departure_time: Optional[Time] = None
     simulated_arrival_time: Optional[Time] = None
@@ -43,13 +51,6 @@ class Flight:
     
     is_incoming_flight: Optional[bool] = False
     is_outgoing_flight: Optional[bool] = False
-
-    actually_diverted: torch.tensor
-    actually_diverted_reached_destination: torch.tensor
-
-    cancelled: Optional[bool] = False
-    diverted: Optional[bool] = False
-    diverted_reached_destination = Optional[bool] = False
 
     carrier_delay: Optional[Time] = None
     weather_delay: Optional[Time] = None

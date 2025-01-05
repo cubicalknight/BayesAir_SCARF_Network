@@ -305,12 +305,12 @@ def get_arrival_departures_rmses(
 
     predictive = pyro.infer.Predictive(
         model=model,
-        posterior_samples=posterior_samples
+        posterior_samples=posterior_samples,
     )
 
     samples = predictive(
         states, travel_times_dict, dt, 
-        obs_none=True
+        obs_none=True,
     )
 
     # trace_pred = pyro.infer.TracePredictive(
@@ -345,7 +345,10 @@ def get_arrival_departures_rmses(
         # print(split_key, sample)
 
         day_str_list.append(split_key[0])
-        flight_number_list.append(split_key[1])
+        flight_number_list.append(
+            split_key[1]
+            # f'{split_key[1]}_{split_key[2]}_{split_key[3]}'
+        )
         origin_airport_list.append(split_key[2])
         destination_airport_list.append(split_key[3])
         sample_arrival_time_list.append(arr_sample)
@@ -377,14 +380,31 @@ def get_arrival_departures_rmses(
         how='inner',
     )
 
-    dep_mask = merged_df["origin_airport"] == "LGA"
-    arr_mask = merged_df["destination_airport"] == "LGA"
+    dep_mask = (
+        (merged_df["origin_airport"] == "LGA")
+        & (merged_df["actual_departure_time"] != 0)
+        & (merged_df["sample_departure_time"] != 0)
+    )
+    arr_mask = (
+        (merged_df["destination_airport"] == "LGA")
+        & (merged_df["actual_arrival_time"] != 0)
+        & (merged_df["sample_arrival_time"] != 0)
+    )
+
+    split_delay_cols = [
+        # "carrier_delay", 
+        "weather_delay", 
+        "nas_delay", 
+        # "security_delay", 
+        # "late_aircraft_delay",
+    ]
 
     arrivals_df = merged_df.loc[
         arr_mask,
         ["date", "flight_number",
          "sample_arrival_time", 
          "actual_arrival_time"]
+         + split_delay_cols
     ]
 
     departures_df = merged_df.loc[
@@ -392,6 +412,7 @@ def get_arrival_departures_rmses(
         ["date", "flight_number",
          "sample_departure_time", 
          "actual_departure_time"]
+         + split_delay_cols
     ]
 
     arrivals_df["squared_dist"] = (
@@ -428,17 +449,20 @@ def get_arrival_departures_rmses(
     )
     departures_rmse_adj = np.sqrt(departures_mse_adj)
 
-    print(arrivals_df)
-    print(departures_df)
-    print(arrivals_df.nlargest(20, columns=['squared_dist']))
-    print(departures_df.nlargest(20, columns=['squared_dist']))
+    # print(arrivals_df)
+    # print(departures_df)
+    print(arrivals_df.nlargest(20, columns=['squared_dist']).to_string(index=False))
+    print("")
+    print(departures_df.nlargest(20, columns=['squared_dist']).to_string(index=False))
 
+    print("")
     print(arrivals_mse, departures_mse)
     print(arrivals_rmse, departures_rmse)
+    print("")
     print(arrivals_mse_adj, departures_mse_adj)
     print(arrivals_rmse_adj, departures_rmse_adj)
 
-    exit()
+    # exit()
 
     return arrivals_rmse, departures_rmse, arrivals_rmse_adj, departures_rmse_adj
 
@@ -555,7 +579,8 @@ def train(
         [
             "date", "flight_number", 
             "origin_airport", "destination_airport", 
-            "actual_arrival_time", "actual_departure_time"
+            "actual_arrival_time", "actual_departure_time",
+            "carrier_delay", "weather_delay", "nas_delay", "security_delay", "late_aircraft_delay",
         ]
     ]
 
@@ -570,6 +595,10 @@ def train(
                 schedule_df, 
                 network_airport_codes,
             )   
+        
+        # print([f for f in incoming_flights if f.flight_number == 'DL:2358'])
+        # print([f for f in network_flights if f.flight_number == 'DL:2358'])
+
         network_state = NetworkState(
             airports={airport.code: airport for airport in network_airports},
             pending_flights=network_flights
@@ -633,7 +662,7 @@ def train(
         if i % rmses_record_every == 0 or i == svi_steps - 1:
             arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj = \
             get_arrival_departures_rmses(
-                model, auto_guide, states, travel_times_dict, dt, observations_df, 5
+                model, auto_guide, states, travel_times_dict, dt, observations_df, 1
             )
             arr_rmses.append(arr_rmse)
             dep_rmses.append(dep_rmse)
