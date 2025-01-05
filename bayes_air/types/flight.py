@@ -44,5 +44,18 @@ class Flight:
     is_incoming_flight: Optional[bool] = False
     is_outgoing_flight: Optional[bool] = False
 
+    actually_diverted: torch.tensor
+    actually_diverted_reached_destination: torch.tensor
+
+    cancelled: Optional[bool] = False
+    diverted: Optional[bool] = False
+    diverted_reached_destination = Optional[bool] = False
+
+    carrier_delay: Optional[Time] = None
+    weather_delay: Optional[Time] = None
+    nas_delay: Optional[Time] = None
+    security_delay: Optional[Time] = None
+    late_aircraft_delay: Optional[Time] = None
+    
     def __str__(self) -> str:
         return f"{self.flight_number}_{self.origin}_{self.destination}"

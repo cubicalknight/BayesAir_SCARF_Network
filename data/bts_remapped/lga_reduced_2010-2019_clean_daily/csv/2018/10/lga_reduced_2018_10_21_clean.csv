@@ -1,6 +1,6 @@
 date,flight_number,tail_number,origin_airport,destination_airport,scheduled_departure_time,scheduled_arrival_time,actual_departure_time,actual_arrival_time,wheels_off_time,wheels_on_time,departure_delay,arrival_delay,carrier_delay,weather_delay,nas_delay,security_delay,late_aircraft_delay,cancelled,cancellation_code,diverted,diverted_reached_destination,diverted_airport_landings
 2018-10-21,AA:1597,N883NN,LGA,DFW,5.66667,9.45,5.65,9.21667,5.95,9.03333,-0.0166667,-0.233333,0,0,0,0,0,False,Z,False,,0
-2018-10-21,MQ:3469,N835AE,RDU,LGA,5.75,7.4,5.66667,8.63333,5.85,8.36667,-0.0833333,1.23333,166.65,166.65,166.65,166.65,166.65,False,Z,True,True,1
+2018-10-21,MQ:3469,N835AE,RDU,LGA,5.75,7.4,5.66667,8.63333,5.85,8.36667,-0.0833333,1.23333,0,0,0,0,0,False,Z,True,True,1
 2018-10-21,EV:4081,N27152,CLE,LGA,5.75,7.41667,5.95,7.6,6.5,7.51667,0.2,0.183333,0,0,0,0,0,False,Z,False,,0
 2018-10-21,AA:1249,N326RP,LGA,MIA,5.91667,9.03333,5.81667,8.68333,6.1,8.53333,-0.1,-0.35,0,0,0,0,0,False,Z,False,,0
 2018-10-21,AA:1934,N947UW,LGA,PHL,5.98333,7.11667,5.86667,6.75,6.03333,6.5,-0.116667,-0.366667,0,0,0,0,0,False,Z,False,,0

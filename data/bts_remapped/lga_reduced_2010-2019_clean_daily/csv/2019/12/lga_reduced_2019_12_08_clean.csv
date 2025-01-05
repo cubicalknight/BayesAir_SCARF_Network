@@ -1,6 +1,6 @@
 date,flight_number,tail_number,origin_airport,destination_airport,scheduled_departure_time,scheduled_arrival_time,actual_departure_time,actual_arrival_time,wheels_off_time,wheels_on_time,departure_delay,arrival_delay,carrier_delay,weather_delay,nas_delay,security_delay,late_aircraft_delay,cancelled,cancellation_code,diverted,diverted_reached_destination,diverted_airport_landings
 2019-12-08,AA:1934,N963UW,LGA,PHL,5.75,6.83333,5.65,7.03333,6.26667,6.86667,-0.1,0.2,0,0,0,0,0,False,Z,False,,0
-2019-12-08,AA:1597,N993NN,LGA,DFW,5.98333,10.0167,6,11.55,6.18333,11.2,0.0166667,1.53333,166.65,166.65,166.65,166.65,166.65,False,Z,True,True,1
+2019-12-08,AA:1597,N993NN,LGA,DFW,5.98333,10.0167,6,11.55,6.18333,11.2,0.0166667,1.53333,0,0,0,0,0,False,Z,True,True,1
 2019-12-08,YX:4645,N116HQ,LGA,CMH,6,7.93333,5.85,7.6,6.11667,7.5,-0.15,-0.333333,0,0,0,0,0,False,Z,False,,0
 2019-12-08,YV:6052,N501MJ,LGA,IAD,6,7.3,5.9,7.11667,6.23333,7.01667,-0.1,-0.183333,0,0,0,0,0,False,Z,False,,0
 2019-12-08,B6:1099,N746JB,LGA,MCO,6,8.78333,5.88333,8.4,6.08333,8.23333,-0.116667,-0.383333,0,0,0,0,0,False,Z,False,,0

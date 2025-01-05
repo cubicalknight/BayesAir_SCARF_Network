@@ -489,6 +489,11 @@ def remap_columns(
         "security_delay",
         "late_aircraft_delay"
     ]
+    delay_cols = [
+        "arrival_delay",
+        "departure_delay",
+    ]
+    all_delay_cols = split_delay_cols + delay_cols
 
     # insert the total delay cols before the split ones
     idx = remapped_df.columns.get_loc(split_delay_cols[0])
@@ -500,6 +505,32 @@ def remap_columns(
     remapped_df[split_delay_cols] = (
         remapped_df[split_delay_cols].astype(float) / 60.0
     )
+
+    actual_dep_cols = ['actual_departure_time', 'wheels_off_time']
+    actual_arr_cols = ['actual_arrival_time', 'wheels_on_time']
+    actual_time_cols = actual_dep_cols + actual_arr_cols
+
+    # for cancelled flights, set some meaningless columns to zero
+    remapped_df.loc[
+        remapped_df.cancelled, 
+        actual_time_cols + all_delay_cols
+    ] = 0.0
+
+    # for diverted flights, set some meaningless columns to zero
+    remapped_df.loc[
+        remapped_df.diverted, 
+        split_delay_cols
+    ] = 0.0
+
+    # for failed diverted flights, set some meaningless columns to zero
+    failed_diverted = (
+        remapped_df.diverted & 
+        (~remapped_df.diverted_reached_destination)
+    )
+    remapped_df.loc[
+        failed_diverted, 
+        actual_arr_cols + delay_cols
+    ] = 0.0    
 
     # Convert date to datetime type
     remapped_df["date"] = pd.to_datetime(remapped_df["date"])
