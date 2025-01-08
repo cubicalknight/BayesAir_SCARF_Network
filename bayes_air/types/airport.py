@@ -197,7 +197,7 @@ class Airport:
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
             ),
-            obs=obs
+            obs=obs,
         )
 
         # print(
