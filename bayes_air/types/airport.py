@@ -301,13 +301,13 @@ class SourceSupernode:
             departure_queue_entry = departure_queue.pop(0)
 
             flight = departure_queue_entry.flight
-            # TODO: make this make sense?
-            departure_queue_entry.approved_time = time
 
             # Takeoff! Assign a departure time and add the flight to the
             # list of departed flights
             self._assign_departure_time(departure_queue_entry, var_prefix)
-            departed_flights.append(flight)
+
+            if not flight.adjusted_cancelled:
+                departed_flights.append(flight)
 
         self.departure_queues[destination_code] = departure_queue
         return departed_flights
@@ -326,27 +326,18 @@ class SourceSupernode:
         # departure_queue_entry.flight.simulated_departure_time = pyro.sample(
         #     var_prefix + str(departure_queue_entry.flight) + "_simulated_departure_time",
         #     dist.Normal(
-        #         departure_queue_entry.approved_time,
+        #         departure_queue_entry.flight.adjusted_departure_time,
         #         self.runway_use_time_std_dev,
         #     ),
         # )
 
-        crs_dep_time = departure_queue_entry.flight.scheduled_departure_time
-        carrier_delay = departure_queue_entry.flight.carrier_delay
-        late_aircraft_delay = departure_queue_entry.flight.late_aircraft_delay
-        security_delay = departure_queue_entry.flight.security_delay
+        departure_queue_entry.flight.simulated_departure_time = (
+            departure_queue_entry.flight.adjusted_departure_time
+        )
 
         # if departure_queue_entry.flight.flight_number == 'DL:2358' \
         #     and departure_queue_entry.flight.destination == 'LGA':
         #     print(crs_dep_time, carrier_delay, late_aircraft_delay)
-
-        departure_queue_entry.flight.simulated_departure_time = (
-            crs_dep_time + carrier_delay + late_aircraft_delay + security_delay
-            # crs_dep_time + torch.maximum(
-            #     carrier_delay + late_aircraft_delay,
-            #     carrier_delay # TODO: replace with ground delay stuff here?
-            # )
-        )
 
         # print(
         #     f"\t{queue_entry.flight} departing at {queue_entry.flight.simulated_departure_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"

@@ -11,6 +11,8 @@ import pyro
 import seaborn as sns
 import torch
 import tqdm
+from math import ceil, floor
+import functools
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -38,16 +40,20 @@ def plot_travel_times(
 
     # Make subplots for the learning curve and each travel time pair
     n_pairs = len(pairs)
-    max_rows = 30
-    max_pairs_per_row = n_pairs // max_rows + 1
+    # max_rows = 30
+    # max_pairs_per_row = n_pairs // max_rows + 1
+    max_pairs_per_row = 4
+    max_rows = ceil(n_pairs / max_pairs_per_row)
     subplot_spec = []
     for i in range(max_rows):
         subplot_spec.append(
             [f"{i * max_pairs_per_row +j}" for j in range(max_pairs_per_row)]
         )
 
-    fig = plt.figure(layout="constrained", figsize=(12, 4 * max_rows))
+    fig = plt.figure(layout="constrained", figsize=(12, 3 * max_rows))
     axs = fig.subplot_mosaic(subplot_spec)
+
+    shared_axs = []
 
     for i, pair in enumerate(pairs):
         # Put all of the data into a DataFrame to plot it
@@ -62,7 +68,8 @@ def plot_travel_times(
         plotting_df = pd.DataFrame(
             {
                 f"{pair[0]}->{pair[1]}": tmp,
-                f"{pair[1]}->{pair[0]}": np.zeros(len(tmp))
+                f"{pair[1]}->{pair[0]}": np.zeros(len(tmp)),
+                "type": "Posterior",
             }
         )
 
@@ -88,14 +95,22 @@ def plot_travel_times(
             #     label="Posterior",
             #     zorder=1,
             # )
-            axs[f"{i}"].hist(
-                plotting_df[f"{pair[0]}->{pair[1]}"],
-                # marker=".",
-                # s=1,
+            # axs[f"{i}"].hist(
+            #     plotting_df[f"{pair[0]}->{pair[1]}"],
+            #     # marker=".",
+            #     # s=1,
+            #     color="blue",
+            #     label="Posterior",
+            #     density=True,
+            #     zorder=1,
+            # )
+            sns.histplot(
+                x=f"{pair[0]}->{pair[1]}",
+                hue="type",
+                ax=axs[f"{i}"],
+                data=plotting_df,
                 color="blue",
-                label="Posterior",
-                density=True,
-                zorder=1,
+                kde=True,
             )
 
         tmp = empirical_travel_times.loc[
@@ -119,15 +134,19 @@ def plot_travel_times(
         # )
         axs[f"{i}"].axvline(tmp, color="red",zorder=9, label="empirical mean")
 
-        axs[f"{i}"].set_xlabel(f"{pair[0]} -> {pair[1]}")
-        axs[f"{i}"].set_ylabel(f"{pair[1]} -> {pair[0]}")
-        axs[f"{i}"].set_xlim(0, 6)
-        axs[f"{i}"].set_ylim(0, 5)
+        # axs[f"{i}"].set_xlabel(f"{pair[0]} -> {pair[1]}")
+        # axs[f"{i}"].set_ylabel(f"{pair[1]} -> {pair[0]}")
+        # axs[f"{i}"].set_xlim(0, 6)
+        # axs[f"{i}"].set_ylim(0, 5)
 
         if i == 0:
             axs[f"{i}"].legend()
         else:
             axs[f"{i}"].legend([], [], frameon=False)
+
+        shared_axs.append(axs[f"{i}"])
+
+    handle_shared_ax_lims(shared_axs)
 
     return fig
 
@@ -141,8 +160,8 @@ def plot_starting_aircraft(auto_guide, states, dt, n_samples):
     # Make subplots for each airport
     airport_codes = states[0].network_state.airports.keys()
     n_pairs = len(airport_codes)
-    max_rows = 3
-    max_plots_per_row = n_pairs // max_rows + 1
+    max_rows = 1
+    max_plots_per_row = ceil(n_pairs / max_rows)
     subplot_spec = []
     for i in range(max_rows):
         subplot_spec.append(
@@ -172,11 +191,34 @@ def plot_starting_aircraft(auto_guide, states, dt, n_samples):
             ax=axs[f"{i}"],
             data=plotting_df,
             color="blue",
-            # kde=True,
+            kde=True,
         )
-        axs[f"{i}"].set_xlim(-0.05, 30.0)
+        # axs[f"{i}"].set_xlim(-0.05, 30.0)
 
     return fig
+
+
+def handle_shared_ax_lims(shared_axs):
+
+    xmins, xmaxs = [], []
+    ymins, ymaxs = [], []
+    
+    for ax in shared_axs:
+        xmin, xmax = ax.get_xlim()
+        ymin, ymax = ax.get_ylim()
+        xmins.append(xmin)
+        xmaxs.append(xmax)
+        ymins.append(ymin)
+        ymaxs.append(ymax)
+
+    shared_xmin = min(xmins)
+    shared_xmax = max(xmaxs)
+    shared_ymin = min(ymins)
+    shared_ymax = max(ymaxs)
+
+    for ax in shared_axs:
+        ax.set_xlim(shared_xmin, shared_xmax)
+        ax.set_ylim(shared_ymin, shared_ymax)
 
 
 def plot_service_times(auto_guide, states, dt, n_samples):
@@ -188,38 +230,55 @@ def plot_service_times(auto_guide, states, dt, n_samples):
     # Make subplots for each airport
     airport_codes = states[0].network_state.airports.keys()
     n_pairs = len(airport_codes)
-    max_rows = 1
-    max_plots_per_row = n_pairs // max_rows #+ 1
+    # max_rows = 1
+    # max_plots_per_row = n_pairs // max_rows #+ 1
+    max_plots_per_row = 4
+    max_rows = ceil(n_pairs / max_plots_per_row)
     subplot_spec = []
     for i in range(max_rows):
         subplot_spec.append(
             [f"{i * max_plots_per_row +j}" for j in range(max_plots_per_row)]
         )
 
-    fig = plt.figure(layout="constrained", figsize=(12, 4 * max_rows))
+    fig = plt.figure(layout="constrained", figsize=(12, 3 * max_rows))
     axs = fig.subplot_mosaic(subplot_spec)
 
     for i, code in enumerate(airport_codes):
         # Put all of the data into a DataFrame to plot it
-        plotting_df = pd.DataFrame(
-            {
-                code: posterior_samples[f"{code}_mean_service_time"]
-                .detach()
-                .cpu()
-                .numpy(),
-                "type": "Posterior",
-            }
-        )
+        shared_axs = []
+        t_idx = 0
+        while True:
+            prefix = f"{code}_{t_idx}"
+            name = f"{prefix}_mean_service_time"
+            if name not in posterior_samples:
+                break
+            plot_idx = i*max_plots_per_row + t_idx
+            t_idx += 1
+            
+            plotting_df = pd.DataFrame(
+                {
+                    prefix: posterior_samples[name]
+                    .detach()
+                    .cpu()
+                    .numpy(),
+                    "type": "Posterior",
+                }
+            )
+            
+            ax = axs[f"{plot_idx}"]
 
-        sns.histplot(
-            x=code,
-            hue="type",
-            ax=axs[f"{i}"],
-            data=plotting_df,
-            color="blue",
-            # kde=True,
-        )
-        # axs[f"{i}"].set_xlim(-0.05, 1.05)
+            sns.histplot(
+                x=prefix,
+                hue="type",
+                ax=ax,
+                data=plotting_df,
+                color="blue",
+                kde=True,
+            )
+
+            shared_axs.append(ax)
+
+    handle_shared_ax_lims(shared_axs)
 
     return fig
 
@@ -233,38 +292,55 @@ def plot_turnaround_times(auto_guide, states, dt, n_samples):
     # Make subplots for each airport
     airport_codes = states[0].network_state.airports.keys()
     n_pairs = len(airport_codes)
-    max_rows = 1
-    max_plots_per_row = n_pairs // max_rows #+ 1
+    # max_rows = 1
+    # max_plots_per_row = n_pairs // max_rows #+ 1
+    max_plots_per_row = 4
+    max_rows = ceil(n_pairs / max_plots_per_row)
     subplot_spec = []
     for i in range(max_rows):
         subplot_spec.append(
             [f"{i * max_plots_per_row +j}" for j in range(max_plots_per_row)]
         )
 
-    fig = plt.figure(layout="constrained", figsize=(12, 4 * max_rows))
+    fig = plt.figure(layout="constrained", figsize=(12, 3 * max_rows))
     axs = fig.subplot_mosaic(subplot_spec)
 
     for i, code in enumerate(airport_codes):
         # Put all of the data into a DataFrame to plot it
-        plotting_df = pd.DataFrame(
-            {
-                code: posterior_samples[f"{code}_mean_turnaround_time"]
-                .detach()
-                .cpu()
-                .numpy(),
-                "type": "Posterior",
-            }
-        )
+        shared_axs = []
+        t_idx = 0
+        while True:
+            prefix = f"{code}_{t_idx}"
+            name = f"{prefix}_mean_service_time"
+            if name not in posterior_samples:
+                break
+            plot_idx = i*max_plots_per_row + t_idx
+            t_idx += 1
 
-        sns.histplot(
-            x=code,
-            hue="type",
-            ax=axs[f"{i}"],
-            data=plotting_df,
-            color="blue",
-            # kde=True,
-        )
-        # axs[f"{i}"].set_xlim(-0.05, 1.05)
+            plotting_df = pd.DataFrame(
+                {
+                    prefix: posterior_samples[name]
+                    .detach()
+                    .cpu()
+                    .numpy(),
+                    "type": "Posterior",
+                }
+            )
+
+            ax = axs[f"{plot_idx}"]
+
+            sns.histplot(
+                x=prefix,
+                hue="type",
+                ax=ax,
+                data=plotting_df,
+                color="blue",
+                kde=True,
+            )
+
+            shared_axs.append(ax)
+
+    handle_shared_ax_lims(shared_axs)
 
     return fig
 
@@ -296,7 +372,7 @@ def plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs):
 
 
 def get_arrival_departures_rmses(
-    model, auto_guide, states, travel_times_dict, dt, 
+    model, auto_guide, states, dt, 
     observations_df, n_samples, wandb=True
 ):
     
@@ -309,13 +385,13 @@ def get_arrival_departures_rmses(
     )
 
     samples = predictive(
-        states, travel_times_dict, dt, 
+        states, dt, 
         obs_none=True,
     )
 
     # trace_pred = pyro.infer.TracePredictive(
     #     model, svi, num_samples=n_samples
-    # ).run(states, travel_times_dict, dt)
+    # ).run(states, dt)
     
     # samples = trace_pred()
 
@@ -449,19 +525,22 @@ def get_arrival_departures_rmses(
     )
     departures_rmse_adj = np.sqrt(departures_mse_adj)
 
-    # print(arrivals_df)
-    # print(departures_df)
-    print(arrivals_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
-    print("")
-    print(departures_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
+    # # print(arrivals_df)
+    # # print(departures_df)
+    # print(arrivals_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
+    # print("")
+    # print(departures_df.nlargest(100, columns=['squared_dist']).drop(["date"], axis=1).to_string(index=False))
 
-    print("")
-    # print(arrivals_mse, departures_mse)
-    print(arrivals_rmse, departures_rmse)
-    print("")
-    # print(arrivals_mse_adj, departures_mse_adj)
-    print(arrivals_rmse_adj, departures_rmse_adj)
+    # print("")
+    # # print(arrivals_mse, departures_mse)
+    # print(arrivals_rmse, departures_rmse)
+    # print("")
+    # # print(arrivals_mse_adj, departures_mse_adj)
+    # print(arrivals_rmse_adj, departures_rmse_adj)
 
+
+    # hr_split = 10 # about to do some heresy
+    hr_lim = 25
 
     arrival_delays_df = merged_df.loc[
         arr_mask,
@@ -492,14 +571,14 @@ def get_arrival_departures_rmses(
         .groupby(sample_arrival_hour)
         ["sample_arrival_delay"]
         .mean()
-        .loc[:25]
+        .loc[:hr_lim]
     )
     hourly_actual_arrival_delay = (
         arrival_delays_df
         .groupby(actual_arrival_hour)
         ["actual_arrival_delay"]
         .mean()
-        .loc[:25]
+        .loc[:hr_lim]
     )
 
     departure_delays_df = merged_df.loc[
@@ -531,14 +610,14 @@ def get_arrival_departures_rmses(
         .groupby(sample_departure_hour)
         ["sample_departure_delay"]
         .mean()
-        .loc[:25]
+        .loc[:hr_lim]
     )
     hourly_actual_departure_delay = (
         departure_delays_df
         .groupby(actual_departure_hour)
         ["actual_departure_delay"]
         .mean()
-        .loc[:25]
+        .loc[:hr_lim]
     )
 
     combined_hourly_delays_df = pd.concat(
@@ -550,7 +629,8 @@ def get_arrival_departures_rmses(
         ],
         axis=1,
     ).sort_index()
-    print(combined_hourly_delays_df)
+
+    # print(combined_hourly_delays_df)
 
     # hourly_arrival_delays_rmse = np.sqrt(
     #     (hourly_sample_arrival_delay - hourly_actual_arrival_delay)**2
@@ -609,15 +689,14 @@ def train(
     starting_aircraft = 50
 
     # Hyperparameters
-    dt = 0.2
-    # dt = 0.05
+    dt = 0.05 # .2
 
     # Use nominal or disrupted data
     if nominal:
         days_str = [
             f"2019-07-{day:02d}"
             for day in [
-                1,4,5,
+                25,
                 # 1,4,5,9,10, #2,3
                 # 14,15,24,25,28
             ]
@@ -664,6 +743,7 @@ def train(
         )
     
     # tt_dict_col = "travel_time"
+    # or i guess always use scheduled?
     tt_dict_col = "scheduled_travel_time"
 
     travel_times = (
@@ -732,12 +812,19 @@ def train(
         states.append(state)
 
     # Re-scale the ELBO by the number of days
-    model = augmented_air_traffic_network_model
+    model = functools.partial(
+        augmented_air_traffic_network_model,
+        travel_times=travel_times_dict,
+        include_cancellations=True,
+        source_use_actual_departure_time=True,
+    )
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
     # Create an autoguide for the model
-    auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
     # auto_guide = pyro.infer.autoguide.AutoDelta(model)
+    # auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
+    auto_guide = pyro.infer.autoguide.AutoLowRankMultivariateNormal(model)
+
 
     # Set up SVI
     gamma = 0.1  # final learning rate will be gamma * initial_lr
@@ -774,7 +861,7 @@ def train(
     rmses_record_every = 10
     pbar = tqdm.tqdm(range(svi_steps))
     for i in pbar:
-        loss = svi.step(states, travel_times_dict, dt)
+        loss = svi.step(states, dt)
         losses.append(loss)
 
         pbar.set_description(f"ELBO loss: {loss:.2f}")
@@ -782,7 +869,7 @@ def train(
         if i % rmses_record_every == 0 or i == svi_steps - 1:
             arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj, hourly_delays = \
             get_arrival_departures_rmses(
-                model, auto_guide, states, travel_times_dict, dt, observations_df, 1
+                model, auto_guide, states, dt, observations_df, 1
             )
             arr_rmses.append(arr_rmse)
             dep_rmses.append(dep_rmse)
