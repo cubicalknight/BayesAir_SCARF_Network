@@ -112,7 +112,7 @@ def air_traffic_network_model(
             for code in airport_codes
         }
     else:
-        # To ignore cancellations, just provide practcially infinite reserves
+        # To ignore cancellations, just provide practically infinite reserves
         airport_initial_available_aircraft = {
             code: torch.tensor(1000.0, device=device) for code in airport_codes
         }
@@ -214,12 +214,47 @@ def air_traffic_network_model(
 
 def augmented_air_traffic_network_model(
     states: list[AugmentedNetworkState],
-    empirical_travel_times: dict[tuple[AirportCode, AirportCode], float],
     delta_t: float = 0.1,
     max_t: float = FAR_FUTURE_TIME,
     device=None,
-    include_cancellations: bool = True,
+
+    travel_times: dict[tuple[AirportCode, AirportCode], float] = None,
+
     obs_none: bool = False,
+    verbose: bool = False,
+
+    include_cancellations: bool = False,
+
+    mean_service_time_effective_hrs: int = 6,
+    mean_turnaround_time_effective_hrs: int = 6,
+    base_cancel_prob_effective_hrs: int = 24,
+    # travel_time_effective_hrs: int = 24,
+    incoming_residual_delay_effective_hrs: int = 6,
+    outgoing_residual_delay_effective_hrs: int = 6,
+
+    # if actual times are chosen, then these are ignored
+    source_use_actual_nas_delay: bool = False,
+    source_use_actual_carrier_delay: bool = False,
+    source_use_actual_weather_delay: bool = False,
+    source_use_actual_security_delay: bool = False,
+    source_use_actual_late_aircraft_delay: bool = False,
+    # only one of below can be set, deptime overrides wo
+    source_use_actual_departure_time: bool = False,
+    source_use_actual_wheels_off_time: bool = False,
+
+    source_use_actual_cancelled: bool = True,
+
+    model_incoming_residual_departure_delay: bool = False,
+    model_outgoing_residual_departure_delay: bool = False,
+
+    # # mostly for debugging
+    # network_use_actual_nas_delay: bool = False,
+    # network_use_actual_carrier_delay: bool = False,
+    # network_use_actual_weather_delay: bool = False,
+    # network_use_actual_security_delay: bool = False,
+    # network_use_actual_late_aircraft_delay: bool = False,
+    # network_use_actual_departure_time: bool = False,
+    # network_use_actual_wheels_off_time: bool = False,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -246,6 +281,15 @@ def augmented_air_traffic_network_model(
             state.obs_none = obs_none
             state.sync_child_obs_none()
 
+    # setup latent parameter effective time splits
+
+    num_mean_service_time = max(1, 24 // mean_service_time_effective_hrs)
+    num_mean_turnaround_time = max(1, 24 // mean_turnaround_time_effective_hrs)
+    num_base_cancel_prob = max(1, 24 // base_cancel_prob_effective_hrs)
+    # num_travel_time = max(1, 24 // travel_time_effective_hrs)
+    num_incoming_residual_delay = max(1, 24 // incoming_residual_delay_effective_hrs)
+    num_outgoing_residual_delay = max(1, 24 // outgoing_residual_delay_effective_hrs)
+
     # Define system-level parameters
     runway_use_time_std_dev = pyro.param(
         "runway_use_time_std_dev",
@@ -265,27 +309,36 @@ def augmented_air_traffic_network_model(
 
     # Sample latent variables for airports in network
     network_airport_codes = states[0].network_state.airports.keys()
+
     airport_turnaround_times = {
-        code: pyro.sample(
-            f"{code}_mean_turnaround_time",
-            dist.Gamma(
-                torch.tensor(1.0, device=device), 
-                torch.tensor(2.0, device=device)
-            ),
-        )
-        for code in network_airport_codes
+        t_idx: {
+            code: pyro.sample(
+                f"{code}_{t_idx}_mean_turnaround_time",
+                dist.Gamma(
+                    torch.tensor(1.0, device=device), 
+                    torch.tensor(2.0, device=device)
+                ),
+            )
+            for code in network_airport_codes
+        }
+        for t_idx in range(num_mean_turnaround_time)
     }
-    shape = .2
+
     airport_service_times = {
-        code: pyro.sample(
-            f"{code}_mean_service_time",
-            dist.Gamma(
-                torch.tensor(shape, device=device), 
-                torch.tensor(shape*80, device=device)
-            ),
-        )
-        for code in network_airport_codes
+        t_idx: {
+            code: pyro.sample(
+                f"{code}_{t_idx}_mean_service_time",
+                dist.Uniform(
+                    torch.tensor(1/90.0, device=device),
+                    torch.tensor(1/25.0, device=device)
+                )
+            )
+            for code in network_airport_codes
+        }
+        for t_idx in range(num_mean_service_time)
     }
+
+    # with LGA only this is empty...
     network_travel_times = {
         (origin, destination): pyro.sample(
             f"travel_time_{origin}_{destination}",
@@ -300,39 +353,45 @@ def augmented_air_traffic_network_model(
     }
 
     if include_cancellations:
-        network_airport_initial_available_aircraft = {
+        airport_initial_available_aircraft = {
             code: torch.exp(
                 pyro.sample(
                     f"{code}_log_initial_available_aircraft",
                     dist.Normal(
-                        torch.tensor(0.0, device=device),
+                        torch.tensor(2.5, device=device),
                         torch.tensor(1.0, device=device),
                     ),
                 )
             )
             for code in network_airport_codes
         }
-        network_airport_base_cancel_prob = {
-            code: torch.exp(
-                pyro.sample(
-                    f"{code}_base_cancel_logprob",
-                    dist.Normal(
-                        torch.tensor(-3.0, device=device),
-                        torch.tensor(1.0, device=device),
-                    ),
+        airport_base_cancel_prob = {
+            t_idx: {
+                code: torch.exp(
+                    pyro.sample(
+                        f"{code}_{t_idx}_base_cancel_logprob",
+                        dist.Normal(
+                            torch.tensor(-3.0, device=device),
+                            torch.tensor(1.0, device=device),
+                        ),
+                    )
                 )
-            )
-            for code in network_airport_codes
+                for code in network_airport_codes
+            }
+            for t_idx in range(num_base_cancel_prob)
         }
     else:
-        # To ignore cancellations, just provide practcially infinite reserves
+        # To ignore cancellations, just provide practically infinite reserves
         airport_initial_available_aircraft = {
             code: torch.tensor(1000.0, device=device) 
             for code in network_airport_codes
         }
         airport_base_cancel_prob = {
-            code: torch.tensor(0.0, device=device) 
-            for code in network_airport_codes
+            t_idx: {
+                code: torch.tensor(0.0, device=device) 
+                for code in network_airport_codes
+            }
+            for t_idx in range(num_base_cancel_prob)
         }
 
     # sample latent variables for variables outside network
@@ -348,27 +407,27 @@ def augmented_air_traffic_network_model(
         (origin, destination): 
             pyro.sample(
                 f"travel_time_{origin}_{destination}",
-                # dist.Gamma(
-                #     torch.tensor(2.0, device=device), 
-                #     torch.tensor(0.5, device=device)
-                # )
-                # TODO: should actually be based on scheduled times, come to think of it
                 dist.Gamma(
                     torch.tensor(shape, device=device),
                     torch.tensor(
-                        shape / (.9 * empirical_travel_times[(origin, destination)]), 
+                        shape / (.95 * travel_times[(origin, destination)]), 
                         device=device
                     )
                 )
+                if travel_times is not None else
+                dist.Gamma(
+                    torch.tensor(3.0, device=device), 
+                    torch.tensor(1.5, device=device)
+                )
             )
-            # .9 * empirical_travel_times[(origin, destination)]
         for origin in incoming_airport_codes
         for destination in network_airport_codes
-    }
+    } 
+
+    # sample residual delays
+    # TODO: ^
 
     travel_times = network_travel_times | incoming_travel_times
-    airport_initial_available_aircraft = network_airport_initial_available_aircraft
-    airport_base_cancel_prob = network_airport_base_cancel_prob
 
     # Simulate for each state
     output_states = []
@@ -377,6 +436,41 @@ def augmented_air_traffic_network_model(
         state = states[day_ind]
         # var_prefix = f"day{day_ind}_"
         var_prefix = f"{state.day_str}_"
+
+        # set adjusted departure time (for incoming flights)
+        for flight in state.pending_incoming_flights:
+
+            if source_use_actual_departure_time:
+                adj_time = flight.actual_departure_time
+            elif source_use_actual_wheels_off_time:
+                adj_time = flight.wheels_off_time
+
+            else:
+                adj_time = flight.scheduled_departure_time
+                if source_use_actual_carrier_delay:
+                    adj_time += flight.carrier_delay
+                if source_use_actual_late_aircraft_delay:
+                    adj_time += flight.late_aircraft_delay
+                if source_use_actual_nas_delay:
+                    adj_time += flight.nas_delay
+                if source_use_actual_weather_delay:
+                    adj_time += flight.weather_delay
+                if source_use_actual_security_delay:
+                    adj_time += flight.security_delay
+
+            flight.adjusted_departure_time = (
+                adj_time if adj_time is not None
+                else flight.scheduled_departure_time
+            )
+
+            flight.adjusted_cancelled = (
+                flight.cancelled if source_use_actual_cancelled
+                else False
+            )
+
+        state.pending_incoming_flights.sort(
+            key=lambda x: x.adjusted_departure_time
+        )
 
         # print(f"============= Starting day {day_ind} =============")
         # print(f"# pending flights: {len(state.pending_flights)}")
@@ -388,13 +482,13 @@ def augmented_air_traffic_network_model(
 
         # Assign the latent variables to the airports
         for airport in state.network_state.airports.values():
-            airport.mean_service_time = airport_service_times[airport.code]
+            # airport.mean_service_time = airport_service_times[0][airport.code]
             airport.runway_use_time_std_dev = runway_use_time_std_dev
-            airport.mean_turnaround_time = airport_turnaround_times[airport.code]
+            # airport.mean_turnaround_time = airport_turnaround_times[0][airport.code]
             airport.turnaround_time_std_dev = (
                 turnaround_time_variation * airport.mean_turnaround_time
             )
-            airport.base_cancel_prob = airport_base_cancel_prob[airport.code]
+            # airport.base_cancel_prob = airport_base_cancel_prob[0][airport.code]
 
             # Initialize the available aircraft list
             airport.num_available_aircraft = airport_initial_available_aircraft[
@@ -413,6 +507,27 @@ def augmented_air_traffic_network_model(
         while not state.complete:
             # Update the current time
             t += delta_t
+
+            # update parameters as necessary
+            for airport in state.network_state.airports.values():
+                t_item = t.item()
+                # after 24h, just use last one
+                mst_idx = min(
+                    int(t_item // mean_service_time_effective_hrs),
+                    num_mean_service_time - 1
+                )
+                mtt_idx = min(
+                    int(t_item // mean_turnaround_time_effective_hrs),
+                    num_mean_turnaround_time - 1
+                )
+                bcp_idx = min(
+                    int(t_item // base_cancel_prob_effective_hrs),
+                    num_base_cancel_prob - 1
+                )
+                # print(mst_idx, mtt_idx, bcp_idx)
+                airport.mean_service_time = airport_service_times[mst_idx][airport.code]
+                airport.mean_turnaround_time = airport_turnaround_times[mtt_idx][airport.code]
+                airport.base_cancel_prob = airport_base_cancel_prob[bcp_idx][airport.code]
 
             # print(t)
             # print(f'pending incoming flights: {len(state.pending_incoming_flights)}')

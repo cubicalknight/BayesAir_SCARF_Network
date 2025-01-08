@@ -158,20 +158,18 @@ class NetworkState:
     ):
 
         default_device = flight.scheduled_departure_time.device
-        def zero_sample(suffix, device=default_device):
+        def _zero_sample(suffix, device=default_device):
             pyro.deterministic(
                 var_prefix + str(flight) + suffix,
                 Time(0.0).to(device)
             )
 
-        zero_sample("_simulated_departure_time")
-        zero_sample("_departure_service_time")
+        _zero_sample("_simulated_departure_time")
+        _zero_sample("_departure_service_time")
 
         if not flight.is_outgoing_flight:
-            zero_sample("_simulated_arrival_time")
-            zero_sample("_arrival_service_time")
-
-
+            _zero_sample("_simulated_arrival_time")
+            _zero_sample("_arrival_service_time")
 
     def add_in_transit_flights(
         self,

@@ -57,6 +57,9 @@ class Flight:
     nas_delay: Optional[Time] = None
     security_delay: Optional[Time] = None
     late_aircraft_delay: Optional[Time] = None
+
+    adjusted_departure_time: Optional[Time] = None
+    adjusted_cancelled: Optional[bool] = False
     
     def __str__(self) -> str:
         return f"{self.flight_number}_{self.origin}_{self.destination}"
