@@ -421,7 +421,7 @@ def augmented_air_traffic_network_model(
             t_idx: {
                 code: torch.exp(
                     -pyro.sample(
-                        f"{code}_{t_idx}_base_cancel_logprob",
+                        f"{code}_{t_idx}_base_cancel_neg_logprob",
                         _gamma_dist_from_mean_std(3.0, 1.0)
                     ) # note the negative
                     # torch.tensor(-3.0, device=device) # testing

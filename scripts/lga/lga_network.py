@@ -232,8 +232,8 @@ plot_turnaround_times = functools.partial(
 
 plot_base_cancel_prob = functools.partial(
     plot_time_indexed_network_var,
-    "base_cancel_logprob",
-    transform=torch.exp,
+    "base_cancel_neg_logprob",
+    transform=lambda x: torch.exp(-x),
     plots_per_row=1,
 )
 
@@ -850,6 +850,10 @@ def train(
 
             fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
             wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
+
+            fig = plot_base_cancel_prob(auto_guide, states, dt, n_samples)
+            wandb.log({"Baseline cancellation probability": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
             # Save the params and autoguide
