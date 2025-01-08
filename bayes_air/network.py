@@ -95,7 +95,7 @@ class NetworkState:
             cancellation_probability = 1 - (
                 1 - base_cancel_prob
             ) * torch.nn.functional.sigmoid(
-                10 * (num_available_aircraft / num_flights_to_depart - 0.25)
+                10 * (num_available_aircraft / num_flights_to_depart - 3.0)
             )
             # This gross sigmoid is a smooth approximation of this:
             # cancellation_probability = 1 - torch.maximum(
