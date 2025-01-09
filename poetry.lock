@@ -530,6 +530,21 @@ files = [
 torch = "*"
 
 [[package]]
+name = "dill"
+version = "0.3.9"
+description = "serialize all of Python"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "dill-0.3.9-py3-none-any.whl", hash = "sha256:468dff3b89520b474c0397703366b7b95eebe6303f108adf9b19da1f702be87a"},
+    {file = "dill-0.3.9.tar.gz", hash = "sha256:81aa267dddf68cbfe8029c42ca9ec6a4ab3b22371d1c450abc54422577b4512c"},
+]
+
+[package.extras]
+graph = ["objgraph (>=1.7.2)"]
+profile = ["gprof2dot (>=2022.7.29)"]
+
+[[package]]
 name = "docker-pycreds"
 version = "0.4.0"
 description = "Python bindings for the docker credentials store API"
@@ -3308,4 +3323,4 @@ torch = ">=1.12.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "<3.12,>=3.9"
-content-hash = "298e1077e7a2072ba07a2cf87167df5ce1ec378191b070d7a183a50a32eb0c44"
+content-hash = "8c065ab4686720708f00163ec98e05c01107272292f17429dd90ccb3034e8dbb"
