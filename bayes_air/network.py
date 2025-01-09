@@ -142,7 +142,11 @@ class NetworkState:
                         )
                 else:
                     # also just give a zero sample so predictive doesn't error??
-                    self._assign_times_cancel(flight, var_prefix)
+                    # self._assign_times_cancel(flight, var_prefix)
+
+                    # dummy queue entry to match the function requirements, not used
+                    airport._assign_cancellation(QueueEntry(flight, 0.0), var_prefix)
+
                     # print(f"{flight} cancelled")
                     self.completed_flights.append(flight)
 
@@ -151,24 +155,24 @@ class NetworkState:
 
         return ready_to_depart_flights, ready_times
     
-    def _assign_times_cancel(
-        self,
-        flight: Flight,
-        var_prefix: str = "",
-    ):
+    # def _assign_times_cancel(
+    #     self,
+    #     flight: Flight,
+    #     var_prefix: str = "",
+    # ):
 
-        default_device = flight.scheduled_departure_time.device
-        def _zero_sample(suffix, device=default_device):
-            pyro.deterministic(
-                var_prefix + str(flight) + suffix,
-                Time(0.0).to(device)
-            )
+    #     default_device = flight.scheduled_departure_time.device
+    #     def _zero_sample(suffix, device=default_device):
+    #         pyro.deterministic(
+    #             var_prefix + str(flight) + suffix,
+    #             Time(0.0).to(device)
+    #         )
             
-        _zero_sample("_simulated_departure_time")
-        _zero_sample("_departure_service_time")
-        # if not flight.is_outgoing_flight:
-        #     _zero_sample("_simulated_arrival_time")
-        #     _zero_sample("_arrival_service_time")
+    #     _zero_sample("_simulated_departure_time")
+    #     _zero_sample("_departure_service_time")
+    #     # if not flight.is_outgoing_flight:
+    #     #     _zero_sample("_simulated_arrival_time")
+    #     #     _zero_sample("_arrival_service_time")
 
     def add_in_transit_flights(
         self,

@@ -225,7 +225,7 @@ def augmented_air_traffic_network_model(
     obs_none: bool = False,
     verbose: bool = False,
 
-    include_cancellations: bool = False,
+    include_cancellations: bool = True,
 
     mean_service_time_effective_hrs: int = 6,
     mean_turnaround_time_effective_hrs: int = 6,
@@ -499,33 +499,47 @@ def augmented_air_traffic_network_model(
         code: use_max_holding_time 
         for code in network_airport_codes
     }
-    airport_soft_max_holding_times = {
-        code: (
-            Time(soft_max_holding_time).to(device=device)
-            if soft_max_holding_time is not None
-            else pyro.sample(
-                f"{code}_soft_max_holding_time",
-                dist.Uniform(
-                    torch.tensor(0.0, device=device),
-                    torch.tensor(max_holding_time, device=device)
+    if use_max_holding_time:
+        airport_soft_max_holding_times = {
+            code: (
+                pyro.param(
+                    f"{code}_soft_max_holding_time",
+                    torch.tensor(soft_max_holding_time, device=device),
+                    dist.constraints.nonnegative
+                )
+                if soft_max_holding_time is not None
+                else pyro.sample(
+                    f"{code}_soft_max_holding_time",
+                    dist.Uniform(
+                        torch.tensor(0.0, device=device),
+                        torch.tensor(max_holding_time, device=device)
+                    )
                 )
             )
-        )
-        for code in network_airport_codes
-    }
-    airport_max_holding_times = {
-        code: Time(max_holding_time).to(device=device)
-        for code in network_airport_codes
-    }
+            for code in network_airport_codes
+        }
+        airport_max_holding_times = {
+            code: pyro.param(
+                f"{code}_max_holding_time",
+                torch.tensor(max_holding_time, device=device),
+                dist.constraints.nonnegative
+            )
+            for code in network_airport_codes
+        }
 
     airport_use_max_waiting_times = {
         code: use_max_waiting_time 
         for code in network_airport_codes
     }
-    airport_max_waiting_times = {
-        code: Time(max_waiting_time).to(device) 
-        for code in network_airport_codes
-    }
+    if use_max_waiting_time:
+        airport_max_waiting_times = {
+            code: pyro.param(
+                f"{code}_max_waiting_time",
+                torch.tensor(max_waiting_time, device=device),
+                dist.constraints.nonnegative
+            )
+            for code in network_airport_codes
+        }
 
     # Simulate for each state
     output_states = []

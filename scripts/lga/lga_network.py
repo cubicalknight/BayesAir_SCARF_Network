@@ -245,6 +245,13 @@ plot_starting_aircraft = functools.partial(
     ignore_time_index=True,
 )
 
+plot_soft_max_holding_time = functools.partial(
+    plot_time_indexed_network_var,
+    "soft_max_holding_time",
+    plots_per_row=1,
+    ignore_time_index=True,
+)
+
 
 def plot_elbo_losses(losses):
 
@@ -610,7 +617,8 @@ def train(
     n_samples, 
     svi_lr, 
     plot_every, 
-    nominal=True
+    nominal=True,
+    day_nums=[1],
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
@@ -619,34 +627,17 @@ def train(
     # Avoid plotting error
     matplotlib.use("Agg")
 
-    # Set the number of starting aircraft at each airport
-    starting_aircraft = 50
+    # # Set the number of starting aircraft at each airport
+    # starting_aircraft = 50
 
     # Hyperparameters
-    dt = 0.05 # .2
+    dt = 0.1 # .2
 
-    # Use nominal or disrupted data
-    if nominal:
-        days_str = [
-            f"2019-07-{day:02d}"
-            for day in [
-                25,
-                # 1,4,5,9,10, #2,3
-                # 14,15,24,25,28
-            ]
-        ]
-        days = pd.to_datetime(days_str)
-    else:
-        days_str = [
-            f"2019-07-{day:02d}"
-            for day in [
-                18,
-                #6,8,11,17,18,
-                #19,21,23,30,31
-            ]
-        ]
-        days = pd.to_datetime(days_str)
-    # days = pd.to_datetime(["12-01-2001", "12-02-2001"])
+    days_str = [
+        f"2019-07-{day:02d}"
+        for day in day_nums
+    ]
+    days = pd.to_datetime(days_str)
     num_days = len(days)
 
     data = ba_dataloader.load_remapped_data_bts(days)
@@ -748,13 +739,14 @@ def train(
     # Re-scale the ELBO by the number of days
     model = functools.partial(
         augmented_air_traffic_network_model,
+
         travel_times_dict=travel_times_dict,
         include_cancellations=True,
 
         # source_use_actual_departure_time=True,
         source_use_actual_late_aircraft_delay=True,
         source_use_actual_carrier_delay=True,
-        source_use_actual_security_delay=True,
+        # source_use_actual_security_delay=True,
 
         mean_service_time_effective_hrs=24,
         mean_turnaround_time_effective_hrs=24,
@@ -762,9 +754,9 @@ def train(
         use_nominal_prior=nominal,
         use_failure_prior=not nominal,
 
-        max_holding_time=1.5,
-        soft_max_holding_time=None,
-        max_waiting_time=4.0,
+        # max_holding_time=1.0,
+        # soft_max_holding_time=None,
+        # max_waiting_time=5.0,
     )
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
@@ -791,7 +783,7 @@ def train(
         group="nominal" if nominal else "disrupted",
         config={
             "type": "nominal" if nominal else "disrupted",
-            "starting_aircraft": starting_aircraft,
+            # "starting_aircraft": starting_aircraft,
             "dt": dt,
             "days": days,
             "svi_lr": svi_lr,
@@ -831,13 +823,6 @@ def train(
                 plt.close(fig)
 
         if i % plot_every == 0 or i == svi_steps - 1:
-            fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
-            wandb.log({"Travel times": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
-
-            fig = plot_service_times(auto_guide, states, dt, n_samples)
-            wandb.log({"Mean service times": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
 
             fig = plot_elbo_losses(losses)
             wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
@@ -848,17 +833,23 @@ def train(
             wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-            fig = plot_turnaround_times(auto_guide, states, dt, n_samples)
-            wandb.log({"Mean turnaround times": wandb.Image(fig)}, commit=False)
+            fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
+            wandb.log({"Travel times": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-            fig = plot_starting_aircraft(auto_guide, states, dt, n_samples)
-            wandb.log({"Starting aircraft": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
-
-            fig = plot_base_cancel_prob(auto_guide, states, dt, n_samples)
-            wandb.log({"Baseline cancellation probability": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
+            plotting_dict = {
+                "mean service times": plot_service_times,
+                "mean turnaround_times": plot_turnaround_times,
+                "starting aircraft": plot_starting_aircraft,
+                "baseline cancel probability": plot_base_cancel_prob,
+                # "soft max holding time": plot_soft_max_holding_time,
+            }
+        
+            for name, plot_func in plotting_dict.items():
+                # for now require this common signature
+                fig = plot_func(auto_guide, states, dt, n_samples)
+                wandb.log({name: wandb.Image(fig)}, commit=False)
+                plt.close(fig)
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
@@ -874,14 +865,15 @@ def train(
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--network-airport-codes", default="LGA", help="Use disrupted data")
-@click.option("--disrupted", is_flag=True, help="Use disrupted data")
+@click.option("--network-airport-codes", default="LGA", help="airport codes")
+@click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
 @click.option("--n-samples", default=800, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=100, help="Plot every N steps")
+@click.option("--day", default=1, help="day")
 def train_cmd(
-    network_airport_codes, disrupted, svi_steps, n_samples, svi_lr, plot_every
+    network_airport_codes, failure, svi_steps, n_samples, svi_lr, plot_every, day
 ):
     # TODO: make this better
     network_airport_codes = network_airport_codes.split(',')
@@ -891,43 +883,10 @@ def train_cmd(
         n_samples,
         svi_lr,
         plot_every,
-        nominal=not disrupted,
+        nominal=not failure,
+        day_nums=[day], # TODO: this is not great way of setting the day
     )
 
 
 if __name__ == "__main__":
     train_cmd()
-
-
-    # days = pd.to_datetime(["12-01-2001", "12-02-2001"])
-
-    # data = ba_dataloader.load_remapped_data_bts(days)
-
-    # network_airport_codes = ["LGA"]
-
-    # states = []
-
-    # for schedule_df in data:
-    #     (
-    #         network_flights, network_airports,
-    #         incoming_flights, source_supernode,
-    #     ) = \
-    #         split_and_parse_full_schedule(
-    #             schedule_df, 
-    #             network_airport_codes,
-    #         )
-        
-    #     network_state = NetworkState(
-    #         airports={airport.code: airport for airport in network_airports},
-    #         pending_flights=network_flights
-    #     )
-
-    #     state = AugmentedNetworkState(
-    #         network_state=network_state,
-    #         source_supernode=source_supernode,
-    #         pending_incoming_flights=incoming_flights
-    #     )
-
-    #     states.append(state)
-
-    # print(states)
