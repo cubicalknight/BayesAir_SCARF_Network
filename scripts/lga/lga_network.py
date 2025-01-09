@@ -613,7 +613,7 @@ def plot_hourly_delays(df):
 def train(
     network_airport_codes, 
     # nominal_days, 
-    # disrupted_days,
+    # failure_days,
     svi_steps, 
     n_samples, 
     svi_lr, 
@@ -775,15 +775,15 @@ def train(
     svi = pyro.infer.SVI(model, auto_guide, optim, elbo)
 
     run_name = f"[{','.join(network_airport_codes)}]_"
-    run_name += f"{'nominal' if nominal else 'disrupted'}_"
+    run_name += f"{'nominal' if nominal else 'failure'}_"
     run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
     
     wandb.init(
         project="bayes-air_july-2019_test-1",
         name=run_name,
-        group="nominal" if nominal else "disrupted",
+        group="nominal" if nominal else "failure",
         config={
-            "type": "nominal" if nominal else "disrupted",
+            "type": "nominal" if nominal else "failure",
             # "starting_aircraft": starting_aircraft,
             "dt": dt,
             "days": days,
@@ -884,16 +884,25 @@ def train(
 # TODO: add functionality to pick days
 @click.command()
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
-@click.option("--failure", is_flag=True, help="Use failure prior")
+# @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
 @click.option("--n-samples", default=800, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=100, help="Plot every N steps")
 @click.option("--day", default=1, help="day")
 def train_cmd(
-    network_airport_codes, failure, svi_steps, n_samples, svi_lr, plot_every, day
+    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, day
 ):
     # TODO: make this better
+
+    nominal_days = [
+        1,2,3,4,5,7,9,
+        10,12,13,14,15,16,
+        20,24,25,26,27,28,29
+    ]
+
+    nominal = day in nominal_days
+
     network_airport_codes = network_airport_codes.split(',')
     train(
         network_airport_codes,
@@ -901,7 +910,7 @@ def train_cmd(
         n_samples,
         svi_lr,
         plot_every,
-        nominal=not failure,
+        nominal,
         day_nums=[day], # TODO: this is not great way of setting the day
     )
 
