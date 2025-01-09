@@ -44,6 +44,7 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
         if pd.notna(schedule_row["diverted_reached_destination"])
         else False
     )
+    failed = cancelled or diverted
     
     is_incoming_flight = schedule_row.get("is_incoming_flight")
     is_outgoing_flight = schedule_row.get("is_outgoing_flight")
@@ -111,6 +112,7 @@ def parse_flight(schedule_row: tuple, device=None) -> Flight:
         actually_cancelled=act_tensor(cancelled),
         actually_diverted=act_tensor(diverted),
         actually_diverted_reached_destination=act_tensor(diverted_reached_destination),
+        actually_failed=act_tensor(failed),
 
         carrier_delay=t_tensor(carrier_delay),
         weather_delay=t_tensor(weather_delay),

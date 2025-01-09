@@ -36,6 +36,7 @@ class Flight:
     actually_cancelled: torch.tensor
     actually_diverted: torch.tensor
     actually_diverted_reached_destination: torch.tensor
+    actually_failed: torch.tensor
 
     cancelled: Optional[bool] = False
     diverted: Optional[bool] = False
@@ -43,6 +44,9 @@ class Flight:
 
     simulated_diverted: Optional[torch.tensor] = None
     simulated_cancelled: Optional[torch.tensor] = None
+    simulated_late_cancelled: Optional[torch.tensor] = None
+    simulated_failed: Optional[torch.tensor] = None
+    
     simulated_departure_time: Optional[Time] = None
     simulated_arrival_time: Optional[Time] = None
     
