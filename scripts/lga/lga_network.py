@@ -761,6 +761,10 @@ def train(
 
         use_nominal_prior=nominal,
         use_failure_prior=not nominal,
+
+        max_holding_time=1.5,
+        soft_max_holding_time=None,
+        max_waiting_time=4.0,
     )
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
