@@ -6,7 +6,7 @@ import pyro.distributions as dist
 import torch
 
 from bayes_air.network import NetworkState, AugmentedNetworkState
-from bayes_air.types import QueueEntry, DepartureQueueEntry, AirportCode
+from bayes_air.types import QueueEntry, DepartureQueueEntry, AirportCode, Time
 
 FAR_FUTURE_TIME = 30.0
 
@@ -262,6 +262,13 @@ def augmented_air_traffic_network_model(
     # network_use_actual_late_aircraft_delay: bool = False,
     # network_use_actual_departure_time: bool = False,
     # network_use_actual_wheels_off_time: bool = False,
+
+    use_max_holding_time: bool = False,
+    soft_max_holding_time: float = 0.0,
+    max_holding_time: float = 0.0,
+
+    use_max_waiting_time: bool = False,
+    max_waiting_time: float = 0.0,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -313,7 +320,7 @@ def augmented_air_traffic_network_model(
     def t_to_t_idx(t, effective_hrs, num_idx):
         return max(0, min(
             int((t - effective_start_hr) // effective_hrs),
-            num_idx - 1
+            num_idx - 1 # i think the .item() is unneeded
         ))
 
     # Define system-level parameters
@@ -484,6 +491,36 @@ def augmented_air_traffic_network_model(
 
     travel_times = network_travel_times | incoming_travel_times
 
+
+    # things for handling max queue waiting times for arr/dep flights
+
+    airport_use_max_holding_times = {
+        code: use_max_holding_time 
+        for code in network_airport_codes
+    }
+
+    airport_soft_max_holding_times = {
+        code: Time(soft_max_holding_time).to(device=device)
+        for code in network_airport_codes
+    }
+
+    airport_max_holding_times = {
+        code: Time(max_holding_time).to(device=device)
+        for code in network_airport_codes
+    }
+
+    airport_use_max_waiting_times = {
+        code: use_max_waiting_time 
+        for code in network_airport_codes
+    }
+
+    airport_max_waiting_times = {
+        code: Time(max_waiting_time).to(device) 
+        for code in network_airport_codes
+    }
+
+
+
     # Simulate for each state
     output_states = []
     # for day_ind in pyro.plate("days", len(states)):
@@ -575,7 +612,6 @@ def augmented_air_traffic_network_model(
 
             # update parameters as necessary
             for airport in state.network_state.airports.values():
-                t_item = t.item()
                 # after 24h, just use last one
                 mst_idx = t_to_t_idx(
                     t, mean_service_time_effective_hrs, num_mean_service_time
@@ -654,7 +690,7 @@ def augmented_air_traffic_network_model(
                     travel_time_variation, 
                     var_prefix
                 )
-                
+
                 state.add_completed_flights(network_landing_flights)
 
                 state.add_completed_flights(network_cancelled_flights)
