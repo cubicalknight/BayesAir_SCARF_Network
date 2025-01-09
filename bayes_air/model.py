@@ -263,12 +263,10 @@ def augmented_air_traffic_network_model(
     # network_use_actual_departure_time: bool = False,
     # network_use_actual_wheels_off_time: bool = False,
 
-    use_max_holding_time: bool = False,
-    soft_max_holding_time: float = 0.0,
-    max_holding_time: float = 0.0,
+    soft_max_holding_time: float = None,
+    max_holding_time: float = None,
 
-    use_max_waiting_time: bool = False,
-    max_waiting_time: float = 0.0,
+    max_waiting_time: float = None,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -494,16 +492,27 @@ def augmented_air_traffic_network_model(
 
     # things for handling max queue waiting times for arr/dep flights
 
+    use_max_holding_time = (max_holding_time is not None)
+    use_max_waiting_time = (max_waiting_time is not None)
+
     airport_use_max_holding_times = {
         code: use_max_holding_time 
         for code in network_airport_codes
     }
-
     airport_soft_max_holding_times = {
-        code: Time(soft_max_holding_time).to(device=device)
+        code: (
+            Time(soft_max_holding_time).to(device=device)
+            if soft_max_holding_time is not None
+            else pyro.sample(
+                f"{code}_soft_max_holding_time",
+                dist.Uniform(
+                    torch.tensor(0.0, device=device),
+                    torch.tensor(max_holding_time, device=device)
+                )
+            )
+        )
         for code in network_airport_codes
     }
-
     airport_max_holding_times = {
         code: Time(max_holding_time).to(device=device)
         for code in network_airport_codes
@@ -513,13 +522,10 @@ def augmented_air_traffic_network_model(
         code: use_max_waiting_time 
         for code in network_airport_codes
     }
-
     airport_max_waiting_times = {
         code: Time(max_waiting_time).to(device) 
         for code in network_airport_codes
     }
-
-
 
     # Simulate for each state
     output_states = []
