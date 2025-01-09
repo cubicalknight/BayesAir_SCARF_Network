@@ -13,6 +13,7 @@ import torch
 import tqdm
 from math import ceil, floor
 import functools
+import dill
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -778,7 +779,7 @@ def train(
     run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
     
     wandb.init(
-        project="bayes-air",
+        project="bayes-air_july-2019_test-1",
         name=run_name,
         group="nominal" if nominal else "disrupted",
         config={
@@ -853,12 +854,29 @@ def train(
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
-            save_path = os.path.join(dir_path, "..", "checkpoints", run_name, f"{i}")
+            save_path = os.path.join(dir_path, "checkpoints", run_name, f"{i}")
             os.makedirs(save_path, exist_ok=True)
             pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
             torch.save(auto_guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
         wandb.log({"ELBO": loss})
+
+    wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
+
+    output_dict = {
+        'model': model,
+        'guide': auto_guide,
+        'states': states,
+        'dt': dt,
+    }
+    # TODO: this is like not the best way of handling it but whatever
+    # also maybe redundant but just in case i guess
+
+    dir_path = os.path.dirname(__file__)
+    save_path = os.path.join(dir_path, "checkpoints", run_name, "final")
+    os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(save_path, "output_dict.pkl"), 'wb+') as handle:
+        dill.dump(output_dict, handle)
 
     return loss
 

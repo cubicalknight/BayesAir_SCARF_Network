@@ -376,9 +376,9 @@ def augmented_air_traffic_network_model(
         )
 
     if use_nominal_prior:
-        mst_dist = _gamma_dist_from_mean_std(0.0125, 0.0025)
+        mst_dist = _gamma_dist_from_mean_std(0.0125, 0.01)
     elif use_failure_prior:
-        mst_dist = _gamma_dist_from_mean_std(0.03, 0.012)
+        mst_dist = _gamma_dist_from_mean_std(0.025, 0.015)
     else:
         mst_dist = dist.Uniform(
             torch.tensor(1/100.0, device=device),
