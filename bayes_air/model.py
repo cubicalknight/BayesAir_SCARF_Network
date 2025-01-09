@@ -184,8 +184,10 @@ def air_traffic_network_model(
 
             # All flights that are using the runway get serviced
             for airport in state.airports.values():
-                departed_flights, landing_flights = airport.update_runway_queue(
-                    t, var_prefix
+                (
+                    departed_flights, landing_flights,
+                ) = (
+                    airport.update_runway_queue(t, var_prefix)
                 )
 
                 # Departing flights get added to the in-transit list, while landed flights
@@ -552,6 +554,16 @@ def augmented_air_traffic_network_model(
                 airport.available_aircraft.append(torch.tensor(0.0, device=device))
                 i += 1
 
+            airport.use_max_holding_time = airport_use_max_holding_times[airport.code]
+            airport.use_max_waiting_time = airport_use_max_waiting_times[airport.code]
+
+            if airport.use_max_holding_time:
+                airport.max_holding_time = airport_max_holding_times[airport.code]
+                airport.soft_max_holding_time = airport_soft_max_holding_times[airport.code]
+
+            if airport.use_max_waiting_time:
+                airport.max_waiting_time = airport_max_waiting_times[airport.code]
+
         # assign parameter to source supernode
         state.source_supernode.runway_use_time_std_dev = runway_use_time_std_dev
 
@@ -619,10 +631,12 @@ def augmented_air_traffic_network_model(
 
             # All flights that are using the runway get serviced
             for airport in state.network_state.airports.values():
-                network_departed_flights, network_landing_flights = \
-                    airport.update_runway_queue(
-                        t, var_prefix
-                    )
+                (
+                    network_departed_flights, network_landing_flights,
+                    network_cancelled_flights, network_diverted_flights,
+                ) = (
+                    airport.update_runway_queue(t, var_prefix)
+                )
                 
                 # TODO: update departure things from source supernode
                 incoming_departed_flights = \
@@ -640,7 +654,11 @@ def augmented_air_traffic_network_model(
                     travel_time_variation, 
                     var_prefix
                 )
+                
                 state.add_completed_flights(network_landing_flights)
+
+                state.add_completed_flights(network_cancelled_flights)
+                state.add_completed_flights(network_diverted_flights)
 
             # All flights that are in transit get moved to the runway queue at their
             # destination airport, if enough time has elapsed
