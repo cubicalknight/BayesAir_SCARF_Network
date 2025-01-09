@@ -41,9 +41,11 @@ class Flight:
     diverted: Optional[bool] = False
     diverted_reached_destination: Optional[bool] = False
 
+    simulated_diverted: Optional[torch.tensor] = None
     simulated_cancelled: Optional[torch.tensor] = None
     simulated_departure_time: Optional[Time] = None
     simulated_arrival_time: Optional[Time] = None
+    
     actual_departure_time: Optional[Time] = None
     actual_arrival_time: Optional[Time] = None
     wheels_on_time: Optional[Time] = None

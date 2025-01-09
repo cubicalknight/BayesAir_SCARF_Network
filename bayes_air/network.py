@@ -163,13 +163,12 @@ class NetworkState:
                 var_prefix + str(flight) + suffix,
                 Time(0.0).to(device)
             )
-
+            
         _zero_sample("_simulated_departure_time")
         _zero_sample("_departure_service_time")
-
-        if not flight.is_outgoing_flight:
-            _zero_sample("_simulated_arrival_time")
-            _zero_sample("_arrival_service_time")
+        # if not flight.is_outgoing_flight:
+        #     _zero_sample("_simulated_arrival_time")
+        #     _zero_sample("_arrival_service_time")
 
     def add_in_transit_flights(
         self,

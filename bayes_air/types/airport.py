@@ -71,6 +71,14 @@ class Airport:
 
     obs_none: bool = field(default_factory=lambda: False)
 
+    # the default is to not give any priority to landing flights
+    use_max_holding_time: bool = field(default_factor = lambda: False)
+    soft_max_holding_time: Time = field(default_factory=lambda: Time(0.0))
+    max_holding_time: Time = field(default_factory=lambda: Time(0.0))
+
+    use_max_waiting_time: bool = field(default_factory=lambda: False)
+    max_waiting_time: Time = field(default_factory=lambda: Time(0.0))
+
     def update_available_aircraft(self, time: Time) -> None:
         """Update the number of available aircraft by checking the turnaround queue.
 
@@ -106,10 +114,52 @@ class Airport:
         # While the flight at the front of the queue is ready to be serviced, service it
         departed_flights = []
         landed_flights = []
+        cancelled_flights = []
+        diverted_flights = []
+
+        # if this is too slow then remove it i guess
+        # self.runway_queue.sort(key=lambda x: x.queue_start_time)
+
+        # landing flights that have been waiting for too long
+        # based on elapsed time since entering queue
+        if self.use_max_holding_time:
+            priority_runway_queue = []
+            regular_runway_queue = []
+            for qe in self.runway_queue:
+                no_service_time_assigned = qe.assigned_service_time is None
+                cannot_wait_longer = (time - qe.queue_start_time) > self.soft_max_holding_time
+                if no_service_time_assigned and cannot_wait_longer:
+                    priority_runway_queue.append(qe)
+                else:
+                    regular_runway_queue.append(qe)
+            self.runway_queue = priority_runway_queue + regular_runway_queue
+
+        # print([round(qe.queue_start_time.item(),2) for qe in self.runway_queue])
+
         while self.runway_queue and (
             self.runway_queue[0].assigned_service_time is None
             or self.runway_queue[0].assigned_service_time <= time
         ):
+            head = self.runway_queue[0]
+            arriving = head.flight.destination == self.code
+            departing = not arriving
+            # if it's been too long, cancel/divert flight
+            if self.use_max_holding_time and arriving:
+                if head.total_wait_time > self.max_holding_time:
+                    queue_entry = self.runway_queue.pop(0)
+                    flight = queue_entry.flight
+                    self._assign_diversion(queue_entry, var_prefix)
+                    diverted_flights.append(flight)
+                    continue
+
+            if self.use_max_waiting_time and departing:
+                if head.total_wait_time > self.max_waiting_time:
+                    queue_entry = self.runway_queue.pop(0)
+                    flight = queue_entry.flight
+                    self._assign_cancellation(queue_entry, var_prefix)
+                    cancelled_flights.append(flight)
+                    continue
+
             # If no service time is assigned, assign one now by sampling from
             # the service time distribution
             if self.runway_queue[0].assigned_service_time is None:
@@ -133,10 +183,58 @@ class Airport:
                     self._assign_turnaround_time(flight, var_prefix)
                     landed_flights.append(flight)
 
-        return departed_flights, landed_flights
+        return departed_flights, landed_flights, cancelled_flights, diverted_flights
+    
+
+    def _det_sample_time(self, flight, var_prefix, suffix, value, device):
+        return pyro.deterministic(
+            var_prefix + str(flight) + suffix,
+            Time(value).to(device)
+        )
+    
+    def _det_sample_tensor(self, flight, var_prefix, suffix, value, device):
+        return pyro.deterministic(
+            var_prefix + str(flight) + suffix,
+            torch.tensor(value).to(device)
+        )
+    
+    def _assign_cancellation(
+        self,
+        queue_entry: QueueEntry,
+        var_prefix: str = "",
+    ):
+        flight = queue_entry.flight
+        device = flight.scheduled_departure_time.device
+
+        def zero_sample_time(suffix):
+            return self._det_sample_time(flight, var_prefix, suffix, 0.0, device)
+        def one_sample_tensor(suffix):
+            return self._det_sample_tensor(flight, var_prefix, suffix, 1.0, device)
+
+        zero_sample_time("_departure_service_time")
+        flight.simulated_departure_time = zero_sample_time("_simulated_departure_time")
+        flight.simulated_cancelled = one_sample_tensor("_simulated_cancelled")
+
+    def _assign_diversion(
+        self,
+        queue_entry: QueueEntry,
+        var_prefix: str = ""
+    ):
+        flight = queue_entry.flight
+        device = flight.scheduled_arrival_time.device
+
+        def zero_sample_time(suffix):
+            return self._det_sample_time(flight, var_prefix, suffix, 0.0, device)
+        def one_sample_tensor(suffix):
+            return self._det_sample_tensor(flight, var_prefix, suffix, 1.0, device)
+
+        zero_sample_time("_arrival_service_time")
+        flight.simulated_arrival_time = zero_sample_time("_simulated_arrival_time")
+        flight.simulated_diveted = one_sample_tensor("_simulated_diverted")
+        
 
     def _assign_service_time(
-        self, queue_entry: DepartureQueueEntry, time: Time, var_prefix: str = ""
+        self, queue_entry: QueueEntry, time: Time, var_prefix: str = ""
     ) -> None:
         """Sample a random service time for an entry in the runway queue.
 
