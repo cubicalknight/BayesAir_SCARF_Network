@@ -569,7 +569,7 @@ def top_N_df(df, number_of_airports: int):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    remap_all_data_bts(time_res="yearly")
+    remap_all_data_bts(time_res="decade")
 
 
 
