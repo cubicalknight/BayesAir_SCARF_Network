@@ -11,7 +11,9 @@ from click import command, option
 
 import wandb
 from scripts.training import train
-from scripts.two_moons.model import generate_two_moons_data
+from scripts.two_moons_wzy.model import (
+    generate_two_moons_data_hierarchical,
+)
 from scripts.utils import kl_divergence, ConditionalGaussianMixture
 
 
