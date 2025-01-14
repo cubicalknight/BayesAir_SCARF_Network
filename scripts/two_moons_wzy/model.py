@@ -1,6 +1,7 @@
 """Define the model for the two moons toy problem."""
 import pyro
 import pyro.distributions as dist
+import pyro.distributions
 import torch
 
 
@@ -29,7 +30,10 @@ def generate_two_moons_data(n, device, failure=False, sigma=0.1):
     return torch.normal(x, sigma)
 
 
-def generate_two_moons_data_hierarchical(n, device, sigma=0.1, w_obs=None, z_obs=None, theta_obs=None):
+def generate_two_moons_data_hierarchical(
+        n, device, sigma=0.1, w_obs=None, z_obs=None, theta_obs=None, failure_obs=None,
+        failure=False, nominal=False,
+    ):
     """Generate two moons data.
 
     Args:
@@ -39,11 +43,20 @@ def generate_two_moons_data_hierarchical(n, device, sigma=0.1, w_obs=None, z_obs
     """
 
     if w_obs is None:
-        w = torch.rand(n).to(device)
+        unit = torch.rand(n).to(device)
+        k = .51
+        if failure:
+            w = 1 - k * unit
+            # print(w)
+        elif nominal:
+            w = k * unit
+        else:
+            w = torch.rand(n).to(device)
     else:
         w = w_obs
 
-    z = w > .5 if z_obs is None else z_obs
+    z = w > .5 if failure_obs is None else failure_obs > .5
+    # z = w > .5
 
     if theta_obs is None:
         theta = torch.pi * torch.rand(n).to(device)
@@ -61,6 +74,9 @@ def generate_two_moons_data_hierarchical(n, device, sigma=0.1, w_obs=None, z_obs
     )
         
     y[z] += (torch.tensor([1.0, 0.5]).to(device))
+
+    if z_obs is not None:
+        y = z_obs
 
     y = torch.normal(y, sigma)
 
@@ -163,50 +179,92 @@ def two_moons_z_y_model(n, device, obs=None):
 
 
 
-def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None):
-
+def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, failure_obs=None):
 
     with pyro.plate("data", n):
          
-        w = pyro.deterministic(
-            "w", 
-            w_obs
-        )
+        if w_obs is not None:
+            w = pyro.deterministic(
+                "w", 
+                w_obs
+            )
+            # w = pyro.sample(
+            #     "w", 
+            #     dist.Normal(
+            #         w_obs, .05
+            #     ),
+            #     obs=w_obs
+            # )
+        else:
+            w = pyro.sample(
+                "w",
+                dist.Beta(
+                    torch.tensor(1.0, device=device),
+                    torch.tensor(1.0, device=device)
+                )
+            )
+        
+        # print(w)
+        w_s = torch.zeros(w.shape, device=device)
+        w_s[w >  .5] = 1.0
+        w_s[w <= .5] = 0.0
+        # w_s = w
 
-        z = pyro.sample(
-            "z",
+        failure = pyro.sample(
+            "failure",
             dist.RelaxedBernoulliStraightThrough(
                 temperature=torch.tensor(0.1, device=device),
-                probs=w,
+                probs=w_s,
             ),
+            obs=failure_obs
         )
 
-        failure = torch.tensor(1.0, device=device) * z
+        # loc = torch.zeros(failure.shape)
+        # loc[failure > .5] = torch.pi
 
         theta = pyro.sample(
             "theta",
-            dist.Uniform(
-                torch.tensor(0.0, device=device),
+            dist.AffineBeta(
                 torch.tensor(1.0, device=device),
+                torch.tensor(1.0, device=device),
+                failure,
+                torch.pi
             ),
+            obs=theta_obs
         )
 
-        theta = (theta + failure) * torch.pi
+        print(f'failure: {failure.shape}')
+        print(f'theta: {theta.shape}')
 
-        y_val = torch.stack(
+        z_x = (torch.cos(theta) - 1/2)
+        z_y = (torch.sin(theta) - 1/4)
+
+        z = torch.stack(
             (
-                torch.cos(theta) - 1 / 2,
-                torch.sin(theta) - 1 / 4,
+                z_x, z_y,
             ),
             axis=-1,
         )
-        
-        y_val += (torch.tensor([1.0, 0.5]).to(device)) * failure.unsqueeze(-1)
+
+        # print(z.shape)
+        f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
+        # print(f.shape)
+
+        offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1).reshape(-1,2)
+        # offset = offset.reshape()
+        # print(f'offset: {offset.shape}')
+
+        z += f * offset
+
+
+        z = pyro.deterministic(
+            "z", z
+        )
 
         y = pyro.sample(
             "y",
             dist.Normal(
-                y_val,
+                z,
                 torch.tensor([0.1, 0.1]).to(device),
             ).to_event(1),
             obs=y_obs,
