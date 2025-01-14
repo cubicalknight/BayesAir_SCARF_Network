@@ -29,7 +29,7 @@ def generate_two_moons_data(n, device, failure=False, sigma=0.1):
     return torch.normal(x, sigma)
 
 
-def generate_two_moons_data_hierarchical(n, device, sigma=0.1):
+def generate_two_moons_data_hierarchical(n, device, sigma=0.1, w_obs=None, z_obs=None, theta_obs=None):
     """Generate two moons data.
 
     Args:
@@ -38,15 +38,19 @@ def generate_two_moons_data_hierarchical(n, device, sigma=0.1):
         failure (bool): Whether to generate failure data.
     """
 
-    w = torch.rand(n).to(device)
-    z = w > .5
+    if w_obs is None:
+        w = torch.rand(n).to(device)
+    else:
+        w = w_obs
 
-    theta = torch.pi * torch.rand(n).to(device)
+    z = w > .5 if z_obs is None else z_obs
 
-    # print(w)
-    # print(w > .5)
+    if theta_obs is None:
+        theta = torch.pi * torch.rand(n).to(device)
+        theta[z] += torch.pi
+    else:
+        theta = theta_obs
 
-    theta[z] += torch.pi
 
     y = torch.stack(
         (
@@ -58,9 +62,9 @@ def generate_two_moons_data_hierarchical(n, device, sigma=0.1):
         
     y[z] += (torch.tensor([1.0, 0.5]).to(device))
 
-    y = torch.normal(z, sigma)
+    y = torch.normal(y, sigma)
 
-    return y, w
+    return y.cpu(), w.cpu()
 
 
 
@@ -98,7 +102,7 @@ def two_moons_w_z_model(n, device, obs=None):
             dist.Beta(
                 torch.tensor(1.0, device=device),
                 torch.tensor(1.0, device=device),
-            ).to_event(1),
+            )
         )
 
         z = pyro.sample(
@@ -108,7 +112,7 @@ def two_moons_w_z_model(n, device, obs=None):
                 probs=w,
             ),
             obs=obs
-        ).to_event(1)
+        )
 
     return z
 
@@ -121,17 +125,17 @@ def two_moons_z_y_model(n, device, obs=None):
             dist.Beta(
                 torch.tensor(1.0, device=device),
                 torch.tensor(1.0, device=device),
-            ).to_event(1),
+            ),
         )
 
-        failure = torch.tensor(1.0 if z > .5 else 0.0, device=device)
+        failure = torch.tensor(1.0, device=device) * (z > .5)
 
         theta = pyro.sample(
             "theta",
             dist.Beta(
                 torch.tensor(1.0, device=device),
                 torch.tensor(1.0, device=device),
-            ).to_event(1),
+            ),
         )
 
         theta = (theta + failure) * torch.pi
@@ -144,7 +148,7 @@ def two_moons_z_y_model(n, device, obs=None):
             axis=-1,
         )
         
-        y_val += (torch.tensor([1.0, 0.5]).to(device)) * failure
+        y_val += (torch.tensor([1.0, 0.5]).to(device)) * failure.unsqueeze(-1)
 
         y = pyro.sample(
             "y",
@@ -159,15 +163,65 @@ def two_moons_z_y_model(n, device, obs=None):
 
 
 
+def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None):
+
+
+    with pyro.plate("data", n):
+         
+        w = pyro.deterministic(
+            "w", 
+            w_obs
+        )
+
+        z = pyro.sample(
+            "z",
+            dist.RelaxedBernoulliStraightThrough(
+                temperature=torch.tensor(0.1, device=device),
+                probs=w,
+            ),
+        )
+
+        failure = torch.tensor(1.0, device=device) * z
+
+        theta = pyro.sample(
+            "theta",
+            dist.Uniform(
+                torch.tensor(0.0, device=device),
+                torch.tensor(1.0, device=device),
+            ),
+        )
+
+        theta = (theta + failure) * torch.pi
+
+        y_val = torch.stack(
+            (
+                torch.cos(theta) - 1 / 2,
+                torch.sin(theta) - 1 / 4,
+            ),
+            axis=-1,
+        )
+        
+        y_val += (torch.tensor([1.0, 0.5]).to(device)) * failure.unsqueeze(-1)
+
+        y = pyro.sample(
+            "y",
+            dist.Normal(
+                y_val,
+                torch.tensor([0.1, 0.1]).to(device),
+            ).to_event(1),
+            obs=y_obs,
+        )
+
+    return y
+
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    y, w = [
-        t.cpu() for t in
-        generate_two_moons_data_hierarchical(1000, device)
-    ]
+    y, w = generate_two_moons_data_hierarchical(1000, device)
      
     labels = (w > .5)
     samples = y

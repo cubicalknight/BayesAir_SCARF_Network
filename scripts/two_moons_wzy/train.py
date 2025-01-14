@@ -8,13 +8,16 @@ import pyro
 import torch
 import zuko
 from click import command, option
+import functools
 
 import wandb
 from scripts.training import train
-from scripts.two_moons_wzy.model import (
-    generate_two_moons_data_hierarchical,
-)
+from scripts.two_moons_wzy.model import *
 from scripts.utils import kl_divergence, ConditionalGaussianMixture
+
+from pyro.infer.autoguide import AutoIAFNormal
+import pyro
+from tqdm import tqdm
 
 
 @command()
@@ -115,8 +118,8 @@ def run(
     exclude_nominal,
 ):
     """Generate data and train the SWI model."""
-    matplotlib.use("Agg")
-    matplotlib.rcParams["figure.dpi"] = 300
+    # matplotlib.use("Agg")
+    # matplotlib.rcParams["figure.dpi"] = 300
 
     # Generate data (use consistent seed for all runs to make data)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -130,6 +133,36 @@ def run(
     torch.manual_seed(seed)
     pyro.set_rng_seed(seed)
 
+    n_days = 250
+
+    y_obs, w_obs = [
+        t.cpu() for t in
+        generate_two_moons_data_hierarchical(n_days, device)
+    ]
+
+    # w_z_model = functools.partial(
+    #     two_moons_w_z_model,
+    #     n=n_days,
+    #     device=device,
+    #     obs=w_obs,
+    # )
+    # z_y_model = functools.partial(
+    #     two_moons_z_y_model,
+    #     n=n_days,
+    #     device=device,
+    #     obs=y_obs,
+    # )
+    w_z_y_model = functools.partial(
+        two_moons_w_z_y_model,
+        n=n_days,
+        device=device,
+    )
+
+    # w_z_guide = AutoIAFNormal(w_z_model)
+    # z_y_guide = AutoIAFNormal(z_y_model)
+    w_z_y_guide = AutoIAFNormal(w_z_y_model)
+    # w_z_y_guide = pyro.infer.autoguide.AutoMultivariateNormal(w_z_y_model)
+
     # TODO: figure out how to specify a custom loss
     def simple_elbo(model, guide, *args, **kwargs):
         # run the guide and trace its execution
@@ -139,44 +172,90 @@ def run(
             pyro.poutine.replay(model, trace=guide_trace)).get_trace(*args, **kwargs)
         # construct the elbo loss function
         return -1*(model_trace.log_prob_sum() - guide_trace.log_prob_sum())
+    
+    l = simple_elbo(w_z_y_model, w_z_y_guide, w_obs=w_obs, y_obs=y_obs)
+    # print(l)
 
-    # Make the objective and divergence closures
-    def objective_fn(guide_dist, n, obs):
-        """Compute the data likelihood."""
-        data_likelihood = guide_dist.log_prob(obs).mean()
-
-        return -data_likelihood  # negative because we want to maximize
-
-    def divergence_fn(p, q):
-        """Compute the KL divergence"""
-        return kl_divergence(p, q, n_divergence_particles)
-
-    # Also make a closure for classifying anomalies
-    def score_fn(nominal_guide_dist, failure_guide_dist, n, obs):
-        # Score function is the log likelihood ratio
-        failure_likelihood = failure_guide_dist.log_prob(obs)
-        nominal_likelihood = nominal_guide_dist.log_prob(obs)
-        scores = failure_likelihood - nominal_likelihood
-        return scores
-
-    # Initialize the models
-    if wasserstein:
-        failure_guide = zuko.flows.CNF(
-            features=2, context=n_calibration_permutations, hidden_features=(128, 128)
-        ).to(device)
-    elif gmm:
-        failure_guide = ConditionalGaussianMixture(
-            n_context=n_calibration_permutations, n_features=2
-        ).to(device)
-    else:
-        failure_guide = zuko.flows.NSF(
-            features=2, context=n_calibration_permutations, hidden_features=(64, 64)
-        ).to(device)
 
     # Train the model
-    # TODO:
+    # set up the optimizer
+    n_steps = 10000
+    gamma = 0.1  # final learning rate will be gamma * initial_lr
+    lrd = gamma ** (1 / n_steps)
+    optim = pyro.optim.ClippedAdam({"lr": lr, "lrd": lrd})
+    elbo = pyro.infer.Trace_ELBO(num_particles=1)
 
-    wandb.finish()
+    # setup the inference algorithm
+    svi = pyro.infer.SVI(
+        w_z_y_model, 
+        w_z_y_guide, 
+        optim, 
+        loss=elbo,
+    )
+
+    # do gradient steps
+    pbar = tqdm(range(n_steps))
+    losses = []
+    for step in pbar:
+        loss = svi.step(w_obs=w_obs, y_obs=y_obs)
+        losses.append(loss)
+        if step % 10 == 0:
+            pbar.set_description(f"ELBO loss: {loss:.2f}")
+
+    # plt.figure(figsize=(8,8))
+    # plt.plot(losses)
+    # plt.show()
+
+    w_obs = torch.zeros(n_days, device=device)
+    y_obs, _ = generate_two_moons_data_hierarchical(n_days, device, w_obs=w_obs)
+
+    labels = (w_obs > .5)
+    samples = y_obs
+
+    plt.figure(figsize=(4, 4))
+    plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+    # Turn off axis ticks
+    plt.xticks([])
+    plt.yticks([])
+    plt.axis("off")
+    plt.ylim([-1.1, 1.1])
+    plt.xlim([-1.7, 1.7])
+    # Equal aspect
+    plt.gca().set_aspect("equal")
+    plt.show()
+
+    predictive = pyro.infer.Predictive(
+        w_z_y_model, 
+        guide=w_z_y_guide, 
+        num_samples=1000,
+    )
+    samples = predictive(w_obs=w_obs, y_obs=y_obs)
+
+    z_post = samples['z'].mean(dim=0)
+    t_post = samples['theta'].mean(dim=0)
+
+    plt.figure(figsize=(4, 4))
+    plt.hist(z_post, density=True, bins=32, label='z',alpha=.5)
+    plt.hist(t_post, density=True, bins=32, label='theta',alpha=.5)
+    plt.legend()
+    plt.show()
+
+    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device, z_obs=(z_post>.5))
+
+    labels = (w_obs > .5)
+    samples = y_obs
+
+    plt.figure(figsize=(4, 4))
+    plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+    # Turn off axis ticks
+    plt.xticks([])
+    plt.yticks([])
+    plt.axis("off")
+    plt.ylim([-1.1, 1.1])
+    plt.xlim([-1.7, 1.7])
+    # Equal aspect
+    plt.gca().set_aspect("equal")
+    plt.show()
 
 
 if __name__ == "__main__":
