@@ -155,7 +155,7 @@ def run(
         y = samples.reshape(-1,2).detach()
         return y
 
-    n_days = 10
+    n_days = 100
 
     y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
     # plot_things(y_obs, w_obs > .5, "training data")
