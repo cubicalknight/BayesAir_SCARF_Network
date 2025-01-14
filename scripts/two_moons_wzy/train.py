@@ -133,35 +133,47 @@ def run(
     torch.manual_seed(seed)
     pyro.set_rng_seed(seed)
 
-    n_days = 250
+    def plot_things(samples, labels, title=None):
+        plt.figure(figsize=(4, 4))
+        plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+        # Turn off axis ticks
+        plt.xticks([])
+        plt.yticks([])
+        plt.axis("off")
+        plt.ylim([-1.1, 1.1])
+        plt.xlim([-1.7, 1.7])
+        if title is not None:
+            plt.title(title)
+        # Equal aspect
+        plt.gca().set_aspect("equal")
+        plt.show()
 
-    y_obs, w_obs = [
-        t.cpu() for t in
-        generate_two_moons_data_hierarchical(n_days, device)
-    ]
+    def sample_y_given_something(k, w_obs=None, failure_obs=None, theta_obs=None):
+        with pyro.plate("samples", k, dim=-2):
+            samples = w_z_y_model(w_obs=w_obs, failure_obs=failure_obs, theta_obs=theta_obs)
+        # print(samples)
+        y = samples.reshape(-1,2).detach()
+        return y
 
-    # w_z_model = functools.partial(
-    #     two_moons_w_z_model,
-    #     n=n_days,
-    #     device=device,
-    #     obs=w_obs,
-    # )
-    # z_y_model = functools.partial(
-    #     two_moons_z_y_model,
-    #     n=n_days,
-    #     device=device,
-    #     obs=y_obs,
-    # )
+    n_days = 10
+
+    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
+    # plot_things(y_obs, w_obs > .5, "training data")
+
     w_z_y_model = functools.partial(
         two_moons_w_z_y_model,
         n=n_days,
         device=device,
     )
 
-    # w_z_guide = AutoIAFNormal(w_z_model)
-    # z_y_guide = AutoIAFNormal(z_y_model)
+    # with pyro.plate("samples", 1, dim=-2):
+    #     samples = w_z_y_model(w_obs=w_obs)
+    # print(samples)
+    # y = samples.reshape(-1,2).detach()
+    # print(y)
+    # plot_things(y, w_obs > .5)
+
     w_z_y_guide = AutoIAFNormal(w_z_y_model)
-    # w_z_y_guide = pyro.infer.autoguide.AutoMultivariateNormal(w_z_y_model)
 
     # TODO: figure out how to specify a custom loss
     def simple_elbo(model, guide, *args, **kwargs):
@@ -176,10 +188,9 @@ def run(
     l = simple_elbo(w_z_y_model, w_z_y_guide, w_obs=w_obs, y_obs=y_obs)
     # print(l)
 
-
     # Train the model
     # set up the optimizer
-    n_steps = 10000
+    n_steps = n_steps
     gamma = 0.1  # final learning rate will be gamma * initial_lr
     lrd = gamma ** (1 / n_steps)
     optim = pyro.optim.ClippedAdam({"lr": lr, "lrd": lrd})
@@ -206,57 +217,50 @@ def run(
     # plt.plot(losses)
     # plt.show()
 
-    w_obs = torch.zeros(n_days, device=device)
-    y_obs, _ = generate_two_moons_data_hierarchical(n_days, device, w_obs=w_obs)
+    k = 2
 
-    labels = (w_obs > .5)
-    samples = y_obs
+    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days*k, device, nominal=True)
+    plot_things(y_obs, w_obs > .5, "test data")
+    # print(w_obs)
+
+    # predictive = pyro.infer.Predictive(
+    #     w_z_y_model, 
+    #     guide=w_z_y_guide, 
+    #     num_samples=100,
+    # )
+    # with pyro.plate("samples", n_samples, dim=-1):
+    #     posterior_samples = auto_guide(states, dt)
+    with pyro.plate("samples", k, dim=-2):
+        samples = w_z_y_guide(w_obs=w_obs, y_obs=y_obs)
+
+    print(samples)
+
+    # w_post = samples['w'].flatten()
+    # z_post = samples['z'].reshape(-1, 2)
+    # t_post = samples['theta'].flatten()
+    # f_post = samples['failure'].flatten()
+    # w_post = samples['w'].mean(dim=0)
+    # z_post = samples['z'].mean(dim=0).detach()
+    t_post = samples['theta']
+    f_post = samples['failure']
+
+    t_post_plt = t_post.reshape(-1).detach().cpu()
+    f_post_plt = f_post.reshape(-1).detach().cpu()
+
+    # print(w_post)
 
     plt.figure(figsize=(4, 4))
-    plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
-    # Turn off axis ticks
-    plt.xticks([])
-    plt.yticks([])
-    plt.axis("off")
-    plt.ylim([-1.1, 1.1])
-    plt.xlim([-1.7, 1.7])
-    # Equal aspect
-    plt.gca().set_aspect("equal")
-    plt.show()
-
-    predictive = pyro.infer.Predictive(
-        w_z_y_model, 
-        guide=w_z_y_guide, 
-        num_samples=1000,
-    )
-    samples = predictive(w_obs=w_obs, y_obs=y_obs)
-
-    z_post = samples['z'].mean(dim=0)
-    t_post = samples['theta'].mean(dim=0)
-
-    plt.figure(figsize=(4, 4))
-    plt.hist(z_post, density=True, bins=32, label='z',alpha=.5)
-    plt.hist(t_post, density=True, bins=32, label='theta',alpha=.5)
+    plt.hist(f_post_plt, density=True, bins=64, label='failure',alpha=.5)
+    plt.hist(t_post_plt / (2 * torch.pi), density=True, bins=64, label='theta/2pi',alpha=.5)
     plt.legend()
     plt.show()
 
-    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device, z_obs=(z_post>.5))
+    y_obs = sample_y_given_something(k, theta_obs=t_post)
+    plot_things(y_obs, f_post_plt, 'using theta post')
 
-    labels = (w_obs > .5)
-    samples = y_obs
-
-    plt.figure(figsize=(4, 4))
-    plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
-    # Turn off axis ticks
-    plt.xticks([])
-    plt.yticks([])
-    plt.axis("off")
-    plt.ylim([-1.1, 1.1])
-    plt.xlim([-1.7, 1.7])
-    # Equal aspect
-    plt.gca().set_aspect("equal")
-    plt.show()
-
+    y_obs = sample_y_given_something(k, failure_obs=f_post)
+    plot_things(y_obs, t_post_plt > .5, 'using failure post')
+    
 
 if __name__ == "__main__":
     run()
