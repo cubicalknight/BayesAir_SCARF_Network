@@ -213,28 +213,43 @@ def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, fai
         failure = pyro.sample(
             "failure",
             dist.RelaxedBernoulliStraightThrough(
-                temperature=torch.tensor(0.1, device=device),
+                temperature=torch.tensor(0.01, device=device),
                 probs=w_s,
             ),
             obs=failure_obs
         )
 
-        # loc = torch.zeros(failure.shape)
-        # loc[failure > .5] = torch.pi
+        loc = failure * torch.pi
 
         theta = pyro.sample(
             "theta",
-            dist.AffineBeta(
+            # dist.AffineBeta(
+            #     torch.tensor(1.0, device=device),
+            #     torch.tensor(1.0, device=device),
+            #     loc,
+            #     torch.pi
+            # ),
+            dist.Beta(
                 torch.tensor(1.0, device=device),
-                torch.tensor(1.0, device=device),
-                failure,
-                torch.pi
+                torch.tensor(1.0, device=device)
             ),
             obs=theta_obs
         )
 
-        print(f'failure: {failure.shape}')
-        print(f'theta: {theta.shape}')
+        theta = theta * torch.pi + loc
+
+        # print(loc)
+        # print(theta)
+
+        # print(
+        #     loc.min().item(), 
+        #     loc.max().item(), 
+        #     theta.min().item(),
+        #     theta.max().item(),
+        # )
+
+        # print(f'failure: {failure.shape}')
+        # print(f'theta: {theta.shape}')
 
         z_x = (torch.cos(theta) - 1/2)
         z_y = (torch.sin(theta) - 1/4)
@@ -246,16 +261,19 @@ def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, fai
             axis=-1,
         )
 
-        # print(z.shape)
+        # # print(z.shape)
+        # f = torch.zeros(*theta.shape)
+        # # print(f.shape)
+        # f[theta <  torch.pi] = 0.0
+        # f[theta >= torch.pi] = 1.0
+        # f = f.reshape(*f.shape,1).expand(*f.shape,2)
         f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
-        # print(f.shape)
 
         offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1).reshape(-1,2)
         # offset = offset.reshape()
         # print(f'offset: {offset.shape}')
 
         z += f * offset
-
 
         z = pyro.deterministic(
             "z", z

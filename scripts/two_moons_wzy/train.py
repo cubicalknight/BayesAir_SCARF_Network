@@ -152,7 +152,7 @@ def run(
         with pyro.plate("samples", k, dim=-2):
             samples = w_z_y_model(w_obs=w_obs, failure_obs=failure_obs, theta_obs=theta_obs)
         # print(samples)
-        y = samples.reshape(-1,2).detach()
+        y = samples.reshape(-1,2).detach().cpu()
         return y
 
     n_days = 100
@@ -165,6 +165,11 @@ def run(
         n=n_days,
         device=device,
     )
+
+    f = 1 - torch.randn(n_days) * .01
+    # y = sample_y_given_something(1, failure_obs=f)
+    y = sample_y_given_something(1, w_obs=w_obs)
+    # plot_things(y, torch.ones(n_days), "sample test")
 
     # with pyro.plate("samples", 1, dim=-2):
     #     samples = w_z_y_model(w_obs=w_obs)
@@ -217,7 +222,7 @@ def run(
     # plt.plot(losses)
     # plt.show()
 
-    k = 2
+    k = 10
 
     y_obs, w_obs = generate_two_moons_data_hierarchical(n_days*k, device, nominal=True)
     plot_things(y_obs, w_obs > .5, "test data")
@@ -233,7 +238,7 @@ def run(
     with pyro.plate("samples", k, dim=-2):
         samples = w_z_y_guide(w_obs=w_obs, y_obs=y_obs)
 
-    print(samples)
+    # print(samples)
 
     # w_post = samples['w'].flatten()
     # z_post = samples['z'].reshape(-1, 2)
@@ -247,19 +252,21 @@ def run(
     t_post_plt = t_post.reshape(-1).detach().cpu()
     f_post_plt = f_post.reshape(-1).detach().cpu()
 
+    print(t_post_plt.min(), t_post_plt.max())
+
     # print(w_post)
 
     plt.figure(figsize=(4, 4))
     plt.hist(f_post_plt, density=True, bins=64, label='failure',alpha=.5)
-    plt.hist(t_post_plt / (2 * torch.pi), density=True, bins=64, label='theta/2pi',alpha=.5)
+    # plt.hist(t_post_plt, density=True, bins=64, label='theta',alpha=.5)
     plt.legend()
     plt.show()
 
-    y_obs = sample_y_given_something(k, theta_obs=t_post)
-    plot_things(y_obs, f_post_plt, 'using theta post')
+    y_obs = sample_y_given_something(k, failure_obs=f_post, theta_obs=t_post)
+    plot_things(y_obs, f_post_plt, 'using failure/theta post')
 
-    y_obs = sample_y_given_something(k, failure_obs=f_post)
-    plot_things(y_obs, t_post_plt > .5, 'using failure post')
+    # y_obs = sample_y_given_something(k, failure_obs=f_post)
+    # plot_things(y_obs, f_post_plt, 'using failure post')
     
 
 if __name__ == "__main__":
