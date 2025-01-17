@@ -23,7 +23,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
-from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 from oil.utils.utils import Expression,export,Named
 from collections import defaultdict
 
