@@ -12,6 +12,7 @@ from flowgmm.flow_ssl.realnvp.realnvp import RealNVPTabular
 from flowgmm.flow_ssl.distributions import SSLGaussMixture
 from flowgmm.flow_ssl import FlowLoss
 
+import torch
 import torch.nn as nn
 from enum import Enum, auto
 import abc
@@ -25,8 +26,8 @@ class EncoderMLP(nn.Module):
     """
     simple multi-layer perceptron for the w -> c mapping
     building block for a mixture of densities network
+    here we consider the 
     """
-
     def __init__(self, input_dim, hidden_dim=100, n_layers=1, n_classes=2, act_layer=nn.Softplus()):
         super().__init__()
 
@@ -37,7 +38,7 @@ class EncoderMLP(nn.Module):
             modules.append(nn.Linear(input_dim, hidden_dim))
             for _ in range(n_layers-2):
                 modules.append(nn.Linear(input_dim, hidden_dim))
-                modules.append(nn.Softplus())
+                modules.append(act_layer)
             modules.append(nn.Linear(hidden_dim, n_classes))
 
         self.network = nn.Sequential(*modules)
@@ -46,45 +47,83 @@ class EncoderMLP(nn.Module):
 
     def forward(self, x):
         input = x.reshape(-1, self.input_dim)
-        return self.network(input)
+        logits = self.network(input) # is this true???
+        return logits
     
-    def predict(self, x):
-        weights = self.forward(x)
-        _, predicted = torch.max(weights, 1)
-        return predicted
+    def get_mixture_label(self, x):
+        logits = self.forward(x)
+        mixture_label = nn.functional.gumbel_softmax(logits, tau=1, hard=True)
+        return mixture_label
+    
+    def classify(self, x):
+        mixture_label = self.get_mixture_label(x)
+        return torch.max(mixture_label, 1)[1]
+
     
     
 # TODO: flowgmm??
-class EncoderFlowGMM(object):
+class EncoderFlowGMM(RealNVPTabular):
     def __init__(
-        self,
-        prior=SSLGaussMixture(
-            means=3.5*torch.tensor([[-1.0, -1.0], [1.0, 1.0]])
-        ),
-        flow=RealNVPTabular(
-            num_coupling_layers=5, in_dim=2, num_layers=1, hidden_dim=512
-        ),
+        self, in_dim=2, num_coupling_layers=6, hidden_dim=256, 
+                 num_layers=2, init_zeros=False, dropout=False,
+        prior=None,
         lr_init = 1e-4,
         weight_decay=1e-2,
     ):
+        super().__init__(in_dim, num_coupling_layers, hidden_dim, 
+                 num_layers, init_zeros, dropout)
+        
+        if prior is None:
+            self.prior = SSLGaussMixture(
+                means=3.5*torch.tensor([[-1.0, -1.0], [1.0, 1.0]])
+            ) # TODO: fix this
 
-        self.loss_fn = FlowLoss(prior)
+        self.classify = self.prior.classify
+        
+        self.loss_fn = FlowLoss(self.prior)
 
         self.optimizer = torch.optim.Adam(
-            [p for p in flow.parameters() if p.requires_grad==True], 
+            [p for p in self.parameters() if p.requires_grad==True], 
             lr=lr_init, 
-            weight_decay=weight_decay,
+            weight_decay=1e-2
         )
 
-    def loss(self):
-        pass
-
-    def forward(self):
-        pass # is this already done?
-
-    def predict(self):
-        pass
+    def loss(self, z, y):
+        # x, y = torch.from_numpy(x), torch.from_numpy(y)
+        sldj = self.logdet()
+        loss = self.loss_fn(z, sldj, y)
+        return loss
     
+    # def get_mixture_label(self, x):
+    #     logits = self.forward(x)
+    #     mixture_label = nn.functional.gumbel_softmax(logits, tau=1, hard=True)
+    #     return mixture_label
+
+    # def predict(self, x):
+    #     mixture_label = self.get_mixture_label(x)
+    #     return torch.max(mixture_label, 1)[1]
+    
+
+class MixtureWZ(torch.distributions.distribution):
+    def __init__(self, f_encoder, g_decoder, weights, temperature):
+        # TODO: unsure ???
+        self.f_encoder = f_encoder
+        self.g_decoder = g_decoder
+        self.weights = weights
+        self.temperature = temperature
+
+    def rsample_and_logprob(self, sample_shape):
+        raise NotImplementedError
+
+    def rsample(self, sample_shape):
+        raise NotImplementedError
+
+    def log_prob(self, sample):
+        raise NotImplementedError
+        # self.g_encoder negative log likelihood based on mixture label ?
+
+
+
 
 
 
@@ -92,36 +131,35 @@ class EncoderFlowGMM(object):
 
 class WZY(object):
     """
-        our model: w -> c -> z -> y
+    our model: w -> c -> z -> y
 
-        w -> c: "classifier", essentially determines which weather 
-                based prior we will use for use with the observation
-                we refer to this as (f_encoder) here
+    w -> c: "classifier", essentially determines which weather 
+            based prior we will use for use with the observation
+            we refer to this as (f_encoder) here
 
-        c -> z: "weather informed priors", basically the compoments
-                that make up the w -> z if we model it as a mixture
-                we refer to this as (g_decoder) here
+    c -> z: "weather informed priors", basically the compoments
+            that make up the w -> z if we model it as a mixture
+            we refer to this as (g_decoder) here
 
-        z -> y: our simulation with latent variables (e.g. in pyro),
-                but we just need any way to get likelihoods from it
-                we refer to this as (p_model) here
-        
-        z|w,y : approximated with q_guide, see L_q in the paper
-        w|y   : approximated with r_guide, see L_r in the paper
+    z -> y: our simulation with latent variables (e.g. in pyro),
+            but we just need any way to get likelihoods from it
+            we refer to this as (p_model) here
+    
+    z|w,y : approximated with q_guide, see L_q in the paper
+    w|y   : approximated with r_guide, see L_r in the paper
 
-        we need to be able to compute:
+    we need to be able to compute:
 
-        p(z|w) = p(z;f(w))
-        p(y,z|w) = p(y|z) * p(z|w)
+    p(z|w) = p(z;f(w))
+    p(y,z|w) = p(y|z) * p(z|w)
 
-        possibly:
-        p(z) = \sum_c p(z;c) * p(f(w)=c) -> tractable sum
-        p(w|z) = p(z|w) * p(w) / p(z)
-        p(z|y) = \sum_c q(z|y;c) * p(f(w)=c) (approximately)
-        # TODO: also bound the validity of this estimator for z|y ??
+    possibly:
+    p(z) = \sum_c p(z;c) * p(f(w)=c) -> tractable sum
+    p(w|z) = p(z|w) * p(w) / p(z)
+    p(z|y) = \sum_c q(z|y;c) * p(f(w)=c) (approximately)
+    # TODO: also bound the validity of this estimator for z|y ??
         
     """
-
 
     def __init__(
         self,
@@ -305,25 +343,33 @@ def simple_classifier_test():
 
     torch.manual_seed(0)
 
-    n = 10
+    n = 20
     train_n = n-1
     test_n = 1
     dataset = []
     for _ in range(train_n + test_n):
-        x = torch.rand(6)
+        x = torch.rand(20)
         y = (x > .5).long()
+        x = x.reshape(-1,1)
         dataset.append((x, y))
 
     clsf = EncoderMLP(1, 10, 2)
+
+    # clsf = EncoderFlowGMM(
+    #     num_coupling_layers=5, in_dim=1, num_layers=2, hidden_dim=512
+    # )
 
     clsf_optim = torch.optim.Adam(
         clsf.parameters(),
         lr=1e-3,
     )
+    # clsf_optim = clsf.optimizer
 
-    epbar = tqdm(range(5000))
+    epbar = tqdm(range(1000))
     for epoch in epbar:  # loop over the dataset multiple times
-        pbar = tqdm(range(test_n), leave=False)
+        # pbar = tqdm(range(train_n), leave=False)
+        pbar = range(train_n)
+        loss, val_loss = None, None
         for i in pbar:
             # get the inputs; dataset is a list of [inputs, labels]
             x, y = dataset[i]
@@ -331,21 +377,23 @@ def simple_classifier_test():
             clsf_optim.zero_grad()
 
             # forward + backward + optimize
-            out = clsf.forward(x)
-            loss = clsf.loss(out, y)
+            z = clsf.forward(x)
+            loss = clsf.loss(z, y)
             loss.backward()
             clsf_optim.step()
 
             x, y = dataset[train_n]
             out = clsf.forward(x)
             val_loss = clsf.loss(out, y)
-            pbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
-            if i == test_n - 1:
-                epbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
+            # if i % 100 == 0:
+            #     pbar.set_description(f"train | test : {loss:.2f} | {val_loss:.2f}")
+        if epoch % 100 == 0:
+            epbar.set_description(f"train | test : {loss:.2f} | {val_loss:.2f}")
 
     x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
     y = torch.tensor([0,0,0,0,0,1,1,1,1,1], dtype=torch.long)
-    print(clsf.predict(x))
+    x = x.reshape(-1, 1)
+    print(clsf.classify(x))
 
 
 if __name__ == "__main__":

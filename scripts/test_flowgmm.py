@@ -82,7 +82,8 @@ def train(data, labels, loss_fn, use_labeled_only=True):
 
 # labels are -1 for unlabeled??
 data, labels = make_moons_ssl()
-# print(data, labels)
+print(data, labels)
+exit()
 
 # 2 lines below were uncommented??
 # data = data[labels != -1]
