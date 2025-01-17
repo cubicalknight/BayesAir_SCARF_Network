@@ -1,6 +1,7 @@
 import numpy as np
 import ot
 import torch
+import functools
 
 import pyro.distributions as dist
 import pyro
@@ -77,6 +78,7 @@ class WZY(object):
         y|z
         z|c
         c|w
+
         
     """
 
@@ -87,52 +89,101 @@ class WZY(object):
         y_observations,
         # here
         p_model, # for y|z
+        p_model_map_to_sample_sites_fn,
         # guides
         f_encoder, # for c|w, "classifier"
         g_decoder, # for z|c, "weather-informed priors"
         # variational distributions
         q_guide, # for z|w,y
         r_guide, # for w|y
+
+        # log_h_estimate, # y|w, using our biased estimator for q
+        # log_r_estimate, # w|y, using our biased estimator for q
+
+        n_classes,
+
+        # utils
+        n_divergence_particles=10,
+        lr=1e-3,
+        weight_decay=0.0,
+        lr_steps=None,
+        lr_gamma=None,
+        # TODO: make these sane
     ):
         self.w_observations = w_observations
         self.y_observations = y_observations
 
         self.p_model = p_model
+        self.p_model_map_to_sample_sites = p_model_map_to_sample_sites_fn
 
-        self.f_encoder = f_encoder
-        self.g_decoder = g_decoder
+        self.f_encoder = functools.partial(f_encoder, n_classes=n_classes)
+        self.g_decoder = functools.partial(g_decoder, n_classes=n_classes)
+        self.n_classes = n_classes
 
         self.q_guide = q_guide
         self.r_guide = r_guide
 
-
-    def single_particle_elbo(guide_dist, states):
-        posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
-
-        conditioning_dict = map_to_sample_sites(posterior_sample)
-
-        model_trace = pyro.poutine.trace(
-            pyro.poutine.condition(air_traffic_network_model, data=conditioning_dict)
-        ).get_trace(
-            states=states,
-            delta_t=dt,
-            device=device,
-            include_cancellations=include_cancellations,
+        self.q_optimizer = torch.optim.Adam(
+            q_guide.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
         )
+        self.q_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.q_optimizer, step_size=lr_steps, gamma=lr_gamma
+        )
+
+        self.r_optimizer = torch.optim.Adam(
+            r_guide.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
+        )
+        self.r_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.r_optimizer, step_size=lr_steps, gamma=lr_gamma
+        )
+
+        self.g_optimizer = {}
+        for i in range(n_classes):
+            self.g_optimizer[i] = torch.optim.Adam(
+                self.g_decoder.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+            )
+            # TODO: decide on how the f g based on label stuff will work...
+
         
 
-        return model_logprob - posterior_logprob
+
+    # TODO: consturction fo objective, e.g. compare VAE,IWAE, etc.
+
+    # some utils
+
+    def kl_divergence(self, p_dist, q_dist, num_particles):
+        """KL divergence between two distributions."""
+        p_samples, p_logprobs = p_dist.rsample_and_log_prob((num_particles,))
+        q_logprobs = q_dist.log_prob(p_samples)
+        kl_divergence = (p_logprobs - q_logprobs).mean(dim=0)
+        return kl_divergence
+    
+
+    # TODO: some simple funcs for expressing each conditional explicitly
+    # like a y_given_z , etc. just for some clarity i guess
+
     
     # let's figure out what we need for each part of the loss
 
-    def p_model_map_to_sample_sites(self, q_sample):
-        """
-        see the charles implementation for what this is supposed to do
-        """
-        # blah
-        conditioning_dict = {} # TODO: !!!
-        return conditioning_dict
 
+
+    # TODO: this actually needs to be specified with the model...
+    # def p_model_map_to_sample_sites(self, q_sample):
+    #     """
+    #     see the charles implementation for what this is supposed to do
+    #     """
+    #     # blah
+    #     conditioning_dict = {} # TODO: !!!
+    #     return conditioning_dict
+    
+    # TODO: we can "demote" latent z to parameter to compute just p(y|z)?
+    # because more accurately this is y,z|w rn i think
     def p_model_logprob(self, q_sample):
         """
         E_q [ log p(y | z) * p(z) ] ?? can we omit z prior in model? or specify as input?
@@ -150,24 +201,54 @@ class WZY(object):
         model_logprob = model_trace.log_prob_sum()
         return model_logprob
 
-    def q_objective_fn(self):
+    def q_elbo_objective(self, y_obs, w_obs):
         """
         E_q [ log p(y|z) + log g(z;f(w)) - log q(z|y;f(w)) ]
         """
+        c_labels = self.f_encoder.predict(w_obs)
+        # TODO: use self.g_decoder to obtain priors for z
+        # TODO: any point to intra class regularization term?
+
         q_sample, q_logprob = self.q_guide.rsample_and_log_prob()
+
+        # the y_obs will be baked into this part, as intput
+        # basically model needs to accept (1) context stuff/parameters,
+        #   (2) observations (like the whole states dict thing), 
+        #   (3) priors for the latent z, specified by w 
         p_logprob = self.p_model_logprob(q_sample)
         # TODO: is this enough? if the prior can be specified in the model inptu then wwe'r good
         # TODO: see if this is all???
-        return p_logprob - q_logprob
+        return p_logprob - q_logprob # we'll want to maximize this?
     
-    
 
+    # for next part
 
+    def log_h_estimate(self, y, w):
+        """
+        estimator for log p(y|w), using our approximation for q
+        biased downward by kl divergence D(q||p)
+        E_q [ p(y,z|w) / q(z|y,w) ]
+        """
+        # q_sample, q_logprob = self.q_guide.rsample_and_log_prob()
+        # p_logprob = self.p_model_logprob(q_sample)
+        # # actually this is exaclty the same as the ELBO_q ????
+        return self.q_elbo_objective(y, w)
 
+    def log_r_estimate(self):
+        """
+        estimator for log p(w|y), using our approximation for q
+        biased downward by kl divergence D(p||q)
+        E_q [ p(w,z|y) / q(z|y,w) ]
+        unfortunately this does require you to (cheaply) compute
+            E_q [ p(z|y) * p(w|z) ]
+        """
+        pass
 
-
-
-    def r_objective_fn():
+    # for r estimate using more variational inference
+    def r_elbo_objective(self, y_obs):
+        """
+        E_r [ E_q [ log p(y|z) + log g(z;f(w)) - log q(z|y;f(w)) ] - log r(w|y) ]
+        """
         pass
 
 
