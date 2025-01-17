@@ -22,13 +22,203 @@ MixtureLabel = torch.Tensor
 Observation = torch.Tensor
 
 @dataclass
-class Regime:
-    name: str = ""
+class RegimeData:
+    
+    label: MixtureLabel
+    weight: torch.Tensor
     y_subsample: list[Observation]
     w_subsample: list[Observation]
+    name: str = ""
 
-    def yw_subsample(self) -> list[tuple[Observation, Observation]]:
-        return zip(self.y_subsample, self.w_subsample)
+    yw_subsample = None
+
+    def __post_init__(self):
+        self.yw_subsample = zip(self.y_subsample, self.w_subsample)
+    
+    def compute_objective_fn(self, objective_fn, guide):
+        return objective_fn(guide, self.yw_subsample)
+        
+    
+# TODO: inheritance?
+class ZW():
+    def __init__(self):
+        raise NotImplementedError
+
+class ZCW(ZW):
+    def __init__(self):
+        raise NotImplementedError
+
+class MixtureWZ(ZCW):
+    def __init__(self, f_encoder, g_decoder, weights, temperature):
+        # TODO: unsure ???
+        super().__init__()
+        self.f_encoder = f_encoder
+        self.g_decoder = g_decoder
+        self.weights = weights
+        self.temperature = temperature
+
+    def rsample_and_logprob(self, sample_shape):
+        raise NotImplementedError
+
+    def rsample(self, sample_shape):
+        raise NotImplementedError
+
+    def log_prob(self, sample):
+        raise NotImplementedError
+        # self.g_encoder negative log likelihood based on mixture label ?
+
+
+# TODO: definte these
+class YZ():
+    def __init__(self):
+        raise NotImplementedError
+
+class PyroModelYZ(YZ):
+    def __init__(self):
+        raise NotImplementedError
+
+
+
+# TODO: define a framework:
+
+class WZY(ABC):
+    """
+    our model: w -> c -> z -> y
+
+    w -> c: "classifier", essentially determines which weather 
+            based prior we will use for use with the observation
+            we refer to this as (f_encoder) here
+
+    c -> z: "weather informed priors", basically the compoments
+            that make up the w -> z if we model it as a mixture
+            we refer to this as (g_decoder) here
+
+    z -> y: our simulation with latent variables (e.g. in pyro),
+            but we just need any way to get likelihoods from it
+            we refer to this as (p_model) here
+    
+    z|w,y : approximated with q_guide, see L_q in the paper
+    w|y   : approximated with r_guide, see L_r in the paper
+
+    we need to be able to compute:
+
+    p(z|w) = p(z;f(w))
+    p(y,z|w) = p(y|z) * p(z|w)
+
+    possibly:
+    p(z) = \sum_c p(z;c) * p(f(w)=c) -> tractable sum
+    p(w|z) = p(z|w) * p(w) / p(z)
+    p(z|y) = \sum_c q(z|y;c) * p(f(w)=c) (approximately)
+    # TODO: also bound the validity of this estimator for z|y ??
+        
+    """
+    zw: ZW
+    yz: YZ
+    
+    # z_given_wy_guide = None # q guide
+    # w_given_y_guide = None # r guide
+    q_guide = None
+    r_guide = None
+
+    #
+    w_data: Observation
+    y_data: Observation
+    # labels: MixtureLabel
+
+    regimes: list[RegimeData]
+    
+    # make a dataclass for all these kinds of params
+    device = None
+    
+    def __init__(self, myattr: int):
+        # need to set up data and labels
+        # TODO: doo that
+        # we also need to make sure to call super init in children...
+        raise NotImplementedError
+
+    def p_z_given_w_log_prob(self) -> torch.Tensor:
+        """
+        p(z|w)
+        """
+        for r in self.regimes:
+            # compute for each one
+            # add it up
+            pass
+        raise NotImplementedError
+
+    @abstractmethod
+    def p_yz_given_w_log_prob(
+        self, label: MixtureLabel,
+    ) -> torch.Tensor:
+        """
+        p(y,z|w) 
+        """
+        for r in self.regimes:
+            # compute for each one
+            # add it up
+            # we should have different weights
+            pass
+        raise NotImplementedError
+    
+    @abstractmethod
+    def map_observation_to_mixture_label(
+        self, 
+        y_obs: Observation, 
+        w_obs: Observation,
+     ) -> MixtureLabel:
+        """
+        using observation (probably w)
+        in some way, to determine which regime to use
+        TODO: can we support mixtures of regimes?
+        i think following the charles format allows you do that
+        we can also support things general 
+        """
+        raise NotImplementedError
+
+    def q_elbo_objective_single_label(self, q_label):
+        """
+        E_q [ log p(y,z|w) - log q(z|y,w) ]
+        """
+        # get z samples from guide for approximation of expectation
+        q_sample, q_logprob = self.q_guide(q_label).rsample_and_log_prob()
+        # is this only valid for the choice of y and w used to train?
+        return self.p_yz_given_w_log_prob(q_sample) - q_logprob
+    
+    def q_elbo_objective(self, q_labels, weights):
+        objective = torch.tensor(0.0)
+        for q_label in q_labels:
+            obj = self.q_elbo_objective_single_label(q_label)
+            
+    
+    def r_elbo_objective_single_label(self, r_label):
+        """
+        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
+        E_r [ p^ (y|w) - log r(w|y) ]
+        """
+        r_sample, r_logprob = self.r_guide(r_label).rsample_and_log_prob()
+        q_labels = [] # TOOD: r_samples mapped to labels
+        for q_label in q_labels:
+            self.q_elbo_objective(self.y_observations, r_sample)
+
+
+    
+    # @abstractmethod
+    # def z_logprob(self):
+    #     raise NotImplementedError
+    
+    # @abstractmethod
+    # def w_given_z_logprob(self):
+    #     raise NotImplementedError
+    
+    # # @abstractmethod
+    # def z_given_y_logprob(self):
+    #     raise NotImplementedError
+
+
+    
+    # TODO: the util stuff
+
+
 
 
 # starting to add the required components for inference on our more complicated graphical model
@@ -115,187 +305,6 @@ class EncoderFlowGMM(RealNVPTabular):
     # def predict(self, x):
     #     mixture_label = self.get_mixture_label(x)
     #     return torch.max(mixture_label, 1)[1]
-    
-# TODO: inheritance?
-class ZW():
-    def __init__(self):
-        raise NotImplementedError
-
-class ZCW(ZW):
-    def __init__(self):
-        raise NotImplementedError
-
-class MixtureWZ(ZCW):
-    def __init__(self, f_encoder, g_decoder, weights, temperature):
-        # TODO: unsure ???
-        super().__init__()
-        self.f_encoder = f_encoder
-        self.g_decoder = g_decoder
-        self.weights = weights
-        self.temperature = temperature
-
-    def rsample_and_logprob(self, sample_shape):
-        raise NotImplementedError
-
-    def rsample(self, sample_shape):
-        raise NotImplementedError
-
-    def log_prob(self, sample):
-        raise NotImplementedError
-        # self.g_encoder negative log likelihood based on mixture label ?
-
-
-# TODO: definte these
-class YZ():
-    def __init__(self):
-        raise NotImplementedError
-
-class PyroModelYZ(YZ):
-    def __init__(self):
-        raise NotImplementedError
-
-
-
-
-# TODO: define a framework:
-
-class WZY(ABC):
-    """
-    our model: w -> c -> z -> y
-
-    w -> c: "classifier", essentially determines which weather 
-            based prior we will use for use with the observation
-            we refer to this as (f_encoder) here
-
-    c -> z: "weather informed priors", basically the compoments
-            that make up the w -> z if we model it as a mixture
-            we refer to this as (g_decoder) here
-
-    z -> y: our simulation with latent variables (e.g. in pyro),
-            but we just need any way to get likelihoods from it
-            we refer to this as (p_model) here
-    
-    z|w,y : approximated with q_guide, see L_q in the paper
-    w|y   : approximated with r_guide, see L_r in the paper
-
-    we need to be able to compute:
-
-    p(z|w) = p(z;f(w))
-    p(y,z|w) = p(y|z) * p(z|w)
-
-    possibly:
-    p(z) = \sum_c p(z;c) * p(f(w)=c) -> tractable sum
-    p(w|z) = p(z|w) * p(w) / p(z)
-    p(z|y) = \sum_c q(z|y;c) * p(f(w)=c) (approximately)
-    # TODO: also bound the validity of this estimator for z|y ??
-        
-    """
-    zw: ZW
-    yz: YZ
-    
-    # z_given_wy_guide = None # q guide
-    # w_given_y_guide = None # r guide
-    q_guide = None
-    r_guide = None
-
-    #
-    w_data: Observation
-    y_data: Observation
-    labels: MixtureLabel
-    # optionally:
-    regime_dict: dict[
-        Regime, 
-        tuple[
-            MixtureLabel,
-            list[Observation],
-            list[Observation],
-        ]
-    ]
-
-    # make a dataclass for all these kinds of params
-    device = None
-    
-    def __init__(self, myattr: int):
-        # need to set up data and labels
-        # TODO: doo that
-        # we also need to make sure to call super init in children...
-        raise NotImplementedError
-
-    @abstractmethod
-    def p_z_given_w_log_prob(
-        self, label: MixtureLabel
-    ) -> torch.Tensor:
-        """
-        p(z|w), under regime specified by label
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def p_yz_given_w_log_prob(
-        self, label: MixtureLabel,
-    ) -> torch.Tensor:
-        """
-        p(y,z|w), under regime specified by label 
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
-    def map_observation_to_mixture_label(
-        self, 
-        y_obs: Observation, 
-        w_obs: Observation,
-     ) -> MixtureLabel:
-        """
-        using observation (probably w)
-        in some way, to determine which regime to use
-        TODO: can we support mixtures of regimes?
-        i think following the charles format allows you do that
-        we can also support things general 
-        """
-        raise NotImplementedError
-
-    def q_elbo_objective_single_label(self, q_label):
-        """
-        E_q [ log p(y,z|w) - log q(z|y,w) ]
-        """
-        # get z samples from guide for approximation of expectation
-        q_sample, q_logprob = self.q_guide(q_label).rsample_and_log_prob()
-        # is this only valid for the choice of y and w used to train?
-        return self.p_yz_given_w_log_prob(q_sample) - q_logprob
-    
-    def q_elbo_objective(self, q_labels, weights):
-        objective = torch.tensor(0.0)
-        for q_label in q_labels:
-            obj = self.q_elbo_objective_single_label(q_label)
-            
-    
-    def r_elbo_objective_single_label(self, r_label):
-        """
-        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
-        E_r [ p^ (y|w) - log r(w|y) ]
-        """
-        r_sample, r_logprob = self.r_guide(r_label).rsample_and_log_prob()
-        q_labels = [] # TOOD: r_samples mapped to labels
-        for q_label in q_labels:
-            self.q_elbo_objective(self.y_observations, r_sample)
-
-
-    
-    # @abstractmethod
-    # def z_logprob(self):
-    #     raise NotImplementedError
-    
-    # @abstractmethod
-    # def w_given_z_logprob(self):
-    #     raise NotImplementedError
-    
-    # # @abstractmethod
-    # def z_given_y_logprob(self):
-    #     raise NotImplementedError
-
-
-    
-    # TODO: the util stuff
 
 
 
