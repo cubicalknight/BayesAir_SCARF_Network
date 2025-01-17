@@ -75,10 +75,14 @@ class WZY(object):
 
         we need to be able to compute:
 
-        y|z
-        z|c
-        c|w
+        p(z|w) = p(z;f(w))
+        p(y,z|w) = p(y|z) * p(z|w)
 
+        possibly:
+        p(z) = \sum_c p(z;c) * p(f(w)=c) -> tractable sum
+        p(w|z) = p(z|w) * p(w) / p(z)
+        p(z|y) = \sum_c q(z|y;c) * p(f(w)=c) (approximately)
+        # TODO: also bound the validity of this estimator for z|y ??
         
     """
 
