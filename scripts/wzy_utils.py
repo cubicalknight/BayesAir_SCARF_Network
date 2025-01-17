@@ -53,19 +53,38 @@ class MLPClassifierW2C(nn.Module):
 # TODO: define a framework:
 
 class WZY(object):
+    """
+        our model: w -> c -> z -> y
+
+        w -> c: "classifier", essentially determines which weather 
+                based prior we will use for use with the observation
+                we refer to this as (f_encoder) here
+
+        c -> z: "weather informed priors", basically the compoments
+                that make up the w -> z if we model it as a mixture
+                we refer to this as (g_decoder) here
+
+        z -> y: our simulation with latent variables (e.g. in pyro),
+                but we just need any way to get likelihoods from it
+                we refer to this as (p_model) here
+        
+        z|w,y : approximated with q_guide, see L_q in the paper
+        w|y   : approximated with r_guide, see L_r in the paper
+
+        
+        
+    """
+
 
     def __init__(
         self,
         w_observations,
         y_observations,
-
         # here
         p_model, # for y|z
-
         # guides
         f_encoder, # for c|w, "classifier"
-        g_decoder, # for z|c, "mixture base family"
-
+        g_decoder, # for z|c, "weather-informed priors"
         # variational distributions
         q_guide, # for z|w,y
         r_guide, # for w|y
