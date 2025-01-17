@@ -4,7 +4,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
-from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 from flow_ssl.utils import Expression,export,Named
 from flow_ssl.invertible import SqueezeLayer,padChannels,keepChannels,NNdownsample,iAvgPool2d,RandomPadChannels,Flatten
 #from torch.nn.utils import spectral_norm

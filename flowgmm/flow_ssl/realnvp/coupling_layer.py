@@ -143,12 +143,12 @@ class CouplingLayer(CouplingLayerBase):
                              init_zeros=init_zeros)
 
         # Learnable scale for s
-        self.rescale = nn.utils.weight_norm(Rescale(in_channels))
+        self.rescale = nn.utils.parametrizations.weight_norm(Rescale(in_channels))
 
 
 class Rescale(nn.Module):
     """Per-channel rescaling. Need a proper `nn.Module` so we can wrap it
-    with `torch.nn.utils.weight_norm`.
+    with `torch.nn.utils.parameterizations.weight_norm`.
 
     Args:
         num_channels (int): Number of channels in the input.
@@ -181,7 +181,7 @@ class CouplingLayerTabular(CouplingLayerBase):
         self.layers.append(last_layer)
 
         self.st_net = nn.Sequential(*self.layers)
-        self.rescale = nn.utils.weight_norm(RescaleTabular(in_dim))
+        self.rescale = nn.utils.parametrizations.weight_norm(RescaleTabular(in_dim))
        
     @staticmethod
     def _inner_seq(num_layers, mid_dim):

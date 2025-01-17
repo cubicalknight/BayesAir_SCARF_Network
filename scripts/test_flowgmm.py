@@ -11,8 +11,8 @@ np.random.seed(0)
 import matplotlib
 import matplotlib.pyplot as plt
 from pylab import rcParams
-rcParams['figure.figsize'] = 10, 8
-rcParams['figure.dpi'] = 300
+# rcParams['figure.figsize'] = 10, 8
+# rcParams['figure.dpi'] = 300
 
 # from flow_ssl.realnvp.realnvp_toy import ToyRealNVP
 from flowgmm.flow_ssl.realnvp.realnvp import RealNVPTabular
@@ -21,6 +21,7 @@ from flowgmm.flow_ssl.distributions import SSLGaussMixture
 from flowgmm.flow_ssl import FlowLoss
 
 from itertools import chain
+from tqdm import tqdm
 
 
 
@@ -49,7 +50,7 @@ epochs = 2001
 n_ul = np.sum(labels == -1)
 n_l = np.shape(labels)[0] - n_ul
 batch_size = n_l
-print_freq = 500
+loss_report_freq = 20
 
 labeled_data = data[labels != -1]
 labeled_labels = labels[labels != -1]
@@ -58,7 +59,10 @@ unlabeled_labels = labels[labels == -1]
 
 optimizer = torch.optim.Adam([p for p in flow.parameters() if p.requires_grad==True], lr=lr_init, 
                              weight_decay=1e-2)
-for t in range(epochs):    
+
+pbar = tqdm(range(epochs))
+
+for t in pbar:    
     
 #     batch_idx = np.random.choice(n_ul, size=batch_size)
 #     batch_x, batch_y = unlabeled_data[batch_idx], unlabeled_labels[batch_idx]
@@ -74,8 +78,8 @@ for t in range(epochs):
     loss.backward()#retain_graph=True)
     optimizer.step()
     
-    if t % print_freq == 0:
-        print('iter %s:' % t, 'loss = %.3f' % loss)
+    if t % loss_report_freq == 0:
+        pbar.set_description('loss = %.3f' % loss)
         
     if t == int(epochs * 0.5) or t == int(epochs * 0.8):
         for p in optimizer.param_groups:
@@ -113,7 +117,7 @@ def get_decision_boundary(f_xx, f_yy, prior):
     classes = prior.classify(torch.from_numpy(f_points).float()).detach().numpy()
     return classes
 
-plt.figure(figsize=(12, 15))
+plt.figure(figsize=(8, 10))
 
 grid_points = 150
 grid_freq = 10
@@ -192,3 +196,5 @@ for i in range(int(np.max(labels) + 1)):
 plt.title(r'Classifier')
 plt.xlim(x_lims)
 plt.ylim(x_lims)
+
+plt.show()
