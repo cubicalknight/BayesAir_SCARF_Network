@@ -47,6 +47,112 @@ class MLPClassifierW2C(nn.Module):
 
     
 # TODO: flowgmm??
+
+
+
+# TODO: define a framework:
+
+class WZY(object):
+
+    def __init__(
+        self,
+        w_observations,
+        y_observations,
+
+        # here
+        p_model, # for y|z
+
+        # guides
+        f_encoder, # for c|w, "classifier"
+        g_decoder, # for z|c, "mixture base family"
+
+        # variational distributions
+        q_guide, # for z|w,y
+        r_guide, # for w|y
+    ):
+        self.w_observations = w_observations
+        self.y_observations = y_observations
+
+        self.p_model = p_model
+
+        self.f_encoder = f_encoder
+        self.g_decoder = g_decoder
+
+        self.q_guide = q_guide
+        self.r_guide = r_guide
+
+    # let's figure out what we need for each part of the loss
+
+
+    
+
+
+
+
+
+
+    
+def simple_classifier_test():
+    """
+    i don't know how to use torch lol
+    """
+    from tqdm import tqdm
+
+    torch.manual_seed(0)
+
+    n = 10
+    train_n = n-1
+    test_n = 1
+    dataset = []
+    for _ in range(train_n + test_n):
+        x = torch.rand(6)
+        y = (x > .5).long()
+        dataset.append((x, y))
+
+    clsf = MLPClassifierW2C(1, 10, 2)
+
+    clsf_optim = torch.optim.Adam(
+        clsf.parameters(),
+        lr=1e-3,
+    )
+
+    epbar = tqdm(range(5000))
+    for epoch in epbar:  # loop over the dataset multiple times
+        pbar = tqdm(range(test_n), leave=False)
+        for i in pbar:
+            # get the inputs; dataset is a list of [inputs, labels]
+            x, y = dataset[i]
+            # zero the parameter gradients
+            clsf_optim.zero_grad()
+
+            # forward + backward + optimize
+            out = clsf.forward(x)
+            loss = clsf.loss(out, y)
+            loss.backward()
+            clsf_optim.step()
+
+            x, y = dataset[train_n]
+            out = clsf.forward(x)
+            val_loss = clsf.loss(out, y)
+            pbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
+            if i == test_n - 1:
+                epbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
+
+    x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
+    y = torch.tensor([0,0,0,0,0,1,1,1,1,1], dtype=torch.long)
+    print(clsf.predict(x))
+
+
+if __name__ == "__main__":
+    simple_classifier_test()
+
+
+
+
+
+
+
+
 # TODO: alternatively: do w->z in a single step????
 
 # example:
@@ -139,63 +245,3 @@ class MLPClassifierW2C(nn.Module):
 #         rand_normal = torch.randn_like(mu) * sigma + mu
 #         samples = torch.take_along_dim(rand_normal, indices=rand_pi.unsqueeze(-1), dim=1).squeeze(dim=1)
 #         return samples
-
-
-# TODO: define a framework:
-
-class WZY(object):
-    def __init__(self):
-        pass
-        
-
-
-
-
-
-
-if __name__ == "__main__":
-    from tqdm import tqdm
-
-    torch.manual_seed(0)
-
-    n = 10
-    train_n = n-1
-    test_n = 1
-    dataset = []
-    for _ in range(train_n + test_n):
-        x = torch.rand(6)
-        y = (x > .5).long()
-        dataset.append((x, y))
-
-    clsf = MLPClassifierW2C(1, 10, 2)
-
-    clsf_optim = torch.optim.Adam(
-        clsf.parameters(),
-        lr=1e-3,
-    )
-
-    epbar = tqdm(range(5000))
-    for epoch in epbar:  # loop over the dataset multiple times
-        pbar = tqdm(range(test_n), leave=False)
-        for i in pbar:
-            # get the inputs; dataset is a list of [inputs, labels]
-            x, y = dataset[i]
-            # zero the parameter gradients
-            clsf_optim.zero_grad()
-
-            # forward + backward + optimize
-            out = clsf.forward(x)
-            loss = clsf.loss(out, y)
-            loss.backward()
-            clsf_optim.step()
-
-            x, y = dataset[train_n]
-            out = clsf.forward(x)
-            val_loss = clsf.loss(out, y)
-            pbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
-            if i == test_n - 1:
-                epbar.set_description(f"train and val loss: {loss:.2f} | {val_loss:.2f}")
-
-    x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
-    y = torch.tensor([0,0,0,0,0,1,1,1,1,1], dtype=torch.long)
-    print(clsf.predict(x))
