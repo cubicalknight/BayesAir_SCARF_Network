@@ -7,8 +7,10 @@ import pyro.distributions as dist
 import pyro
 import zuko
 from zuko.flows.core import LazyDistribution
-from flowgmm.flow_ssl.realnvp.realnvp import RealNVPTabular
 
+from flowgmm.flow_ssl.realnvp.realnvp import RealNVPTabular
+from flowgmm.flow_ssl.distributions import SSLGaussMixture
+from flowgmm.flow_ssl import FlowLoss
 
 import torch.nn as nn
 from enum import Enum, auto
@@ -19,7 +21,12 @@ import abc
 
 # w -> c (for now, let's just use a classifier -- in general it will be harder...)
     
-class MLPClassifierW2C(nn.Module):
+class EncoderMLP(nn.Module):
+    """
+    simple multi-layer perceptron for the w -> c mapping
+    building block for a mixture of densities network
+    """
+
     def __init__(self, input_dim, hidden_dim=100, n_layers=1, n_classes=2, act_layer=nn.Softplus()):
         super().__init__()
 
@@ -46,9 +53,38 @@ class MLPClassifierW2C(nn.Module):
         _, predicted = torch.max(weights, 1)
         return predicted
     
-
     
 # TODO: flowgmm??
+class EncoderFlowGMM(object):
+    def __init__(
+        self,
+        prior=SSLGaussMixture(
+            means=3.5*torch.tensor([[-1.0, -1.0], [1.0, 1.0]])
+        ),
+        flow=RealNVPTabular(
+            num_coupling_layers=5, in_dim=2, num_layers=1, hidden_dim=512
+        ),
+        lr_init = 1e-4,
+        weight_decay=1e-2,
+    ):
+
+        self.loss_fn = FlowLoss(prior)
+
+        self.optimizer = torch.optim.Adam(
+            [p for p in flow.parameters() if p.requires_grad==True], 
+            lr=lr_init, 
+            weight_decay=weight_decay,
+        )
+
+    def loss(self):
+        pass
+
+    def forward(self):
+        pass # is this already done?
+
+    def predict(self):
+        pass
+    
 
 
 
@@ -278,7 +314,7 @@ def simple_classifier_test():
         y = (x > .5).long()
         dataset.append((x, y))
 
-    clsf = MLPClassifierW2C(1, 10, 2)
+    clsf = EncoderMLP(1, 10, 2)
 
     clsf_optim = torch.optim.Adam(
         clsf.parameters(),
