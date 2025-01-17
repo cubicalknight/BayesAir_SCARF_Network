@@ -24,66 +24,83 @@ from itertools import chain
 from tqdm import tqdm
 
 
+def train(data, labels, loss_fn, use_labeled_only=True):
 
+    flow = RealNVPTabular(num_coupling_layers=5, in_dim=2, num_layers=1, hidden_dim=512)
+    
+    # get_toy_nvp(D=2, prior=prior, device=None, inner_dim=256, coupling_layers_num=6, inner_layers=2)
+
+    # TODO: this is importnat !!
+    labeled_data = data[labels != -1]
+    labeled_labels = labels[labels != -1]
+    unlabeled_data = data[labels == -1]
+    unlabeled_labels = labels[labels == -1]
+
+    lr_init = 1e-4
+    epochs = 2001
+
+    n_ul = np.sum(labels == -1)
+    n_l = np.shape(labels)[0] - n_ul
+    batch_size = n_l
+    loss_report_freq = 20
+
+    optimizer = torch.optim.Adam(
+        [p for p in flow.parameters() if p.requires_grad==True], 
+        lr=lr_init, 
+        weight_decay=1e-2
+    )
+
+    pbar = tqdm(range(epochs))
+
+    for t in pbar:    
+        
+        if not use_labeled_only:
+            batch_idx = np.random.choice(n_ul, size=batch_size)
+            batch_x, batch_y = unlabeled_data[batch_idx], unlabeled_labels[batch_idx]
+        else:
+            batch_x = labeled_data
+            batch_y = labeled_labels
+        batch_x, batch_y = torch.from_numpy(batch_x), torch.from_numpy(batch_y)
+        z = flow(batch_x)
+        sldj = flow.logdet()
+
+        loss = loss_fn(z, sldj, batch_y)
+        
+        optimizer.zero_grad()
+        loss.backward()#retain_graph=True)
+        optimizer.step()
+        
+        if t % loss_report_freq == 0:
+            pbar.set_description('loss = %.3f' % loss)
+            
+        if t == int(epochs * 0.5) or t == int(epochs * 0.8):
+            for p in optimizer.param_groups:
+                p["lr"] /= 10
+
+    return flow
+
+
+# labels are -1 for unlabeled??
+data, labels = make_moons_ssl()
+# print(data, labels)
+
+# 2 lines below were uncommented??
+# data = data[labels != -1]
+# labels = labels[labels != -1]
+
+
+
+# some of this should go in the fucntion...
+# they're just not because the plotting stuff after uses them lol
 r = 3.5
 means = torch.tensor([[-r, -r], [r, r]])
-
 # r = 3.5
 # n_classes = 2
 # means = get_means(n_classes, r)
-
 prior = SSLGaussMixture(means=means)
-
-data, labels = make_moons_ssl()
-
-flow = RealNVPTabular(num_coupling_layers=5, in_dim=2, num_layers=1, hidden_dim=512)
 loss_fn = FlowLoss(prior)
-# get_toy_nvp(D=2, prior=prior, device=None, inner_dim=256, coupling_layers_num=6, inner_layers=2)
+flow = train(data, labels, loss_fn)
 
-# print(data, labels)
-data = data[labels != -1]
-labels = labels[labels != -1]
-
-lr_init = 1e-4
-epochs = 2001
-
-n_ul = np.sum(labels == -1)
-n_l = np.shape(labels)[0] - n_ul
-batch_size = n_l
-loss_report_freq = 20
-
-labeled_data = data[labels != -1]
-labeled_labels = labels[labels != -1]
-unlabeled_data = data[labels == -1]
-unlabeled_labels = labels[labels == -1]
-
-optimizer = torch.optim.Adam([p for p in flow.parameters() if p.requires_grad==True], lr=lr_init, 
-                             weight_decay=1e-2)
-
-pbar = tqdm(range(epochs))
-
-for t in pbar:    
-    
-#     batch_idx = np.random.choice(n_ul, size=batch_size)
-#     batch_x, batch_y = unlabeled_data[batch_idx], unlabeled_labels[batch_idx]
-    batch_x = labeled_data
-    batch_y = labeled_labels
-    batch_x, batch_y = torch.from_numpy(batch_x), torch.from_numpy(batch_y)
-    z = flow(batch_x)
-    sldj = flow.logdet()
-
-    loss = loss_fn(z, sldj, batch_y)
-    
-    optimizer.zero_grad()
-    loss.backward()#retain_graph=True)
-    optimizer.step()
-    
-    if t % loss_report_freq == 0:
-        pbar.set_description('loss = %.3f' % loss)
-        
-    if t == int(epochs * 0.5) or t == int(epochs * 0.8):
-        for p in optimizer.param_groups:
-            p["lr"] /= 10
 
 
 
