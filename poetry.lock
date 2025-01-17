@@ -38,6 +38,17 @@ astroid = ["astroid (>=2,<4)"]
 test = ["astroid (>=2,<4)", "pytest", "pytest-cov", "pytest-xdist"]
 
 [[package]]
+name = "better-abc"
+version = "0.0.3"
+description = "Python ABC plus abstract attributes"
+optional = false
+python-versions = "*"
+files = [
+    {file = "better-abc-0.0.3.tar.gz", hash = "sha256:a880fd6bc9675da2ec991e8712a555bffa0f12722efed78c739f78343cf989f6"},
+    {file = "better_abc-0.0.3-py3-none-any.whl", hash = "sha256:3ae73b473fbeb536a548f542984976e80b821676ae6e18f14e24d8e180647187"},
+]
+
+[[package]]
 name = "cartopy"
 version = "0.23.0"
 description = "A Python library for cartographic visualizations with Matplotlib"
@@ -3625,4 +3636,4 @@ dev = ["pre-commit", "pytest", "ruff"]
 [metadata]
 lock-version = "2.0"
 python-versions = "<3.12,>=3.9"
-content-hash = "653fb04e149176d1b0622fc3574cc1d25cccd00a19745c18d6f7fd1aec14ed1c"
+content-hash = "d8e65e16442af1b66a0d26c789e45678b9e7102e4ac44e192a4d7db2c604e7ae"

@@ -15,7 +15,8 @@ from flowgmm.flow_ssl import FlowLoss
 import torch
 import torch.nn as nn
 from enum import Enum, auto
-import abc
+from abc import ABC, abstractmethod
+# from better_abc import ABCMeta, abstract_attribute
 
 
 # starting to add the required components for inference on our more complicated graphical model
@@ -103,10 +104,19 @@ class EncoderFlowGMM(RealNVPTabular):
     #     mixture_label = self.get_mixture_label(x)
     #     return torch.max(mixture_label, 1)[1]
     
+# TODO: inheritance?
+class ZW():
+    def __init__(self):
+        raise NotImplementedError
 
-class MixtureWZ(torch.distributions.distribution):
+class ZCW(ZW):
+    def __init__(self):
+        raise NotImplementedError
+
+class MixtureWZ(ZCW):
     def __init__(self, f_encoder, g_decoder, weights, temperature):
         # TODO: unsure ???
+        super().__init__()
         self.f_encoder = f_encoder
         self.g_decoder = g_decoder
         self.weights = weights
@@ -123,13 +133,21 @@ class MixtureWZ(torch.distributions.distribution):
         # self.g_encoder negative log likelihood based on mixture label ?
 
 
+# TODO: definte these
+class YZ():
+    def __init__(self):
+        raise NotImplementedError
+
+class PyroModelYZ(YZ):
+    def __init__(self):
+        raise NotImplementedError
 
 
 
 
 # TODO: define a framework:
 
-class WZY(object):
+class WZY(ABC):
     """
     our model: w -> c -> z -> y
 
@@ -160,6 +178,64 @@ class WZY(object):
     # TODO: also bound the validity of this estimator for z|y ??
         
     """
+    zw: ZW
+    yz: YZ
+    
+    # z_given_wy_guide = None # q guide
+    # w_given_y_guide = None # r guide
+    q_guide = None
+    r_guide = None
+    
+    def __init__(self, myattr: int):
+        self.myattr = myattr
+
+    @abstractmethod
+    def p_z_given_w_log_prob(self, sample):
+        raise NotImplementedError
+
+    @abstractmethod
+    def p_yz_given_w_log_prob(self):
+        raise NotImplementedError
+    
+    def q_elbo_objective(self, label):
+        """
+        E_q [ log p(y,z|w) - log q(z|y,w) ]
+        """
+        # get z samples from guide for approximation of expectation
+        q_sample, q_logprob = self.q_guide(label).rsample_and_log_prob()
+        # is this only valid for the choice of y and w used to train?
+        return self.p_yz_given_w_logprob(q_sample) - q_logprob
+    
+    def r_elbo_objective(self, label):
+        """
+        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
+        E_r [ p^ (y|w) - log r(w|y) ]
+        """
+        r_sample, r_logprob = self.r_guide(label).rsample_and_log_prob()
+        for label in []:
+            self.q_elbo_objective(self.y_observations, r_sample)
+
+
+    
+    # @abstractmethod
+    # def z_logprob(self):
+    #     raise NotImplementedError
+    
+    # @abstractmethod
+    # def w_given_z_logprob(self):
+    #     raise NotImplementedError
+    
+    # # @abstractmethod
+    # def z_given_y_logprob(self):
+    #     raise NotImplementedError
+
+
+    
+    # TODO: the util stuff
+
+
+
+class TestWZY(object):
 
     def __init__(
         self,
