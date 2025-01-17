@@ -5,7 +5,17 @@ description = "A framework for Bayesian modeling and analysis of air transportat
 authors = ["Charles Dawson <charles.dwsn@gmail.com>"]
 license = "BSD 3-Clause"
 readme = "README.md"
-packages = [{include = "bayes_air"}]
+packages = [{include = "bayes_air"}, {include = "flowgmm"}]
+
+# [tool.poetry]
+# description="Flow Gaussian Mixture Model"
+# version='0.1'
+# author='Pavel Izmailov, Polina Kirichenko, Marc Finzi'
+# author_email='pi390@nyu.edu'
+# license='MIT'
+# python_requires='>=3.6'
+# install_requires=['olive-oil-ml @ git+https://github.com/mfinzi/olive-oil-ml']
+# packages = [{include = "flowgmm"}]
 
 [tool.poetry.dependencies]
 python = "<3.12,>=3.9"
@@ -36,6 +46,7 @@ pyarrow = "^18.1.0"
 fastparquet = "^2024.11.0"
 pyqt6 = "^6.8.0"
 dill = "^0.3.9"
+timm = "^1.0.13"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.1.1"
