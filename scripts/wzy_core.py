@@ -16,7 +16,19 @@ import torch
 import torch.nn as nn
 from enum import Enum, auto
 from abc import ABC, abstractmethod
-# from better_abc import ABCMeta, abstract_attribute
+from dataclasses import dataclass
+
+MixtureLabel = torch.Tensor
+Observation = torch.Tensor
+
+@dataclass
+class Regime:
+    name: str = ""
+    y_subsample: list[Observation]
+    w_subsample: list[Observation]
+
+    def yw_subsample(self) -> list[tuple[Observation, Observation]]:
+        return zip(self.y_subsample, self.w_subsample)
 
 
 # starting to add the required components for inference on our more complicated graphical model
@@ -185,34 +197,86 @@ class WZY(ABC):
     # w_given_y_guide = None # r guide
     q_guide = None
     r_guide = None
+
+    #
+    w_data: Observation
+    y_data: Observation
+    labels: MixtureLabel
+    # optionally:
+    regime_dict: dict[
+        Regime, 
+        tuple[
+            MixtureLabel,
+            list[Observation],
+            list[Observation],
+        ]
+    ]
+
+    # make a dataclass for all these kinds of params
+    device = None
     
     def __init__(self, myattr: int):
-        self.myattr = myattr
-
-    @abstractmethod
-    def p_z_given_w_log_prob(self, sample):
+        # need to set up data and labels
+        # TODO: doo that
+        # we also need to make sure to call super init in children...
         raise NotImplementedError
 
     @abstractmethod
-    def p_yz_given_w_log_prob(self):
+    def p_z_given_w_log_prob(
+        self, label: MixtureLabel
+    ) -> torch.Tensor:
+        """
+        p(z|w), under regime specified by label
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def p_yz_given_w_log_prob(
+        self, label: MixtureLabel,
+    ) -> torch.Tensor:
+        """
+        p(y,z|w), under regime specified by label 
+        """
         raise NotImplementedError
     
-    def q_elbo_objective(self, label):
+    @abstractmethod
+    def map_observation_to_mixture_label(
+        self, 
+        y_obs: Observation, 
+        w_obs: Observation,
+     ) -> MixtureLabel:
+        """
+        using observation (probably w)
+        in some way, to determine which regime to use
+        TODO: can we support mixtures of regimes?
+        i think following the charles format allows you do that
+        we can also support things general 
+        """
+        raise NotImplementedError
+
+    def q_elbo_objective_single_label(self, q_label):
         """
         E_q [ log p(y,z|w) - log q(z|y,w) ]
         """
         # get z samples from guide for approximation of expectation
-        q_sample, q_logprob = self.q_guide(label).rsample_and_log_prob()
+        q_sample, q_logprob = self.q_guide(q_label).rsample_and_log_prob()
         # is this only valid for the choice of y and w used to train?
-        return self.p_yz_given_w_logprob(q_sample) - q_logprob
+        return self.p_yz_given_w_log_prob(q_sample) - q_logprob
     
-    def r_elbo_objective(self, label):
+    def q_elbo_objective(self, q_labels, weights):
+        objective = torch.tensor(0.0)
+        for q_label in q_labels:
+            obj = self.q_elbo_objective_single_label(q_label)
+            
+    
+    def r_elbo_objective_single_label(self, r_label):
         """
         p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
         E_r [ p^ (y|w) - log r(w|y) ]
         """
-        r_sample, r_logprob = self.r_guide(label).rsample_and_log_prob()
-        for label in []:
+        r_sample, r_logprob = self.r_guide(r_label).rsample_and_log_prob()
+        q_labels = [] # TOOD: r_samples mapped to labels
+        for q_label in q_labels:
             self.q_elbo_objective(self.y_observations, r_sample)
 
 
