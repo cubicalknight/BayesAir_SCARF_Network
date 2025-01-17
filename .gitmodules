@@ -1,0 +1,3 @@
+[submodule "flowgmm"]
+	path = flowgmm
+	url = https://github.com/izmailovpavel/flowgmm/
