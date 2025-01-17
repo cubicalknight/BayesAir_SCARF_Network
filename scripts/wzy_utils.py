@@ -3,6 +3,7 @@ import ot
 import torch
 
 import pyro.distributions as dist
+import pyro
 import zuko
 from zuko.flows.core import LazyDistribution
 from flowgmm.flow_ssl.realnvp.realnvp import RealNVPTabular
@@ -71,7 +72,11 @@ class WZY(object):
         z|w,y : approximated with q_guide, see L_q in the paper
         w|y   : approximated with r_guide, see L_r in the paper
 
-        
+        we need to be able to compute:
+
+        y|z
+        z|c
+        c|w
         
     """
 
@@ -100,10 +105,70 @@ class WZY(object):
         self.q_guide = q_guide
         self.r_guide = r_guide
 
+
+    def single_particle_elbo(guide_dist, states):
+        posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
+
+        conditioning_dict = map_to_sample_sites(posterior_sample)
+
+        model_trace = pyro.poutine.trace(
+            pyro.poutine.condition(air_traffic_network_model, data=conditioning_dict)
+        ).get_trace(
+            states=states,
+            delta_t=dt,
+            device=device,
+            include_cancellations=include_cancellations,
+        )
+        
+
+        return model_logprob - posterior_logprob
+    
     # let's figure out what we need for each part of the loss
 
+    def p_model_map_to_sample_sites(self, q_sample):
+        """
+        see the charles implementation for what this is supposed to do
+        """
+        # blah
+        conditioning_dict = {} # TODO: !!!
+        return conditioning_dict
 
+    def p_model_logprob(self, q_sample):
+        """
+        E_q [ log p(y | z) * p(z) ] ?? can we omit z prior in model? or specify as input?
+        """
+        conditioning_dict = self.p_model_map_to_sample_sites(q_sample)
+        model_trace = pyro.poutine.trace(
+            pyro.poutine.condition(self.p_model, data=conditioning_dict)
+        ).get_trace(
+            # TODO: model inputs???
+            # states=states,
+            # delta_t=dt,
+            # device=device,
+            # include_cancellations=include_cancellations,
+        )
+        model_logprob = model_trace.log_prob_sum()
+        return model_logprob
+
+    def q_objective_fn(self):
+        """
+        E_q [ log p(y|z) + log g(z;f(w)) - log q(z|y;f(w)) ]
+        """
+        q_sample, q_logprob = self.q_guide.rsample_and_log_prob()
+        p_logprob = self.p_model_logprob(q_sample)
+        # TODO: is this enough? if the prior can be specified in the model inptu then wwe'r good
+        # TODO: see if this is all???
+        return p_logprob - q_logprob
     
+    
+
+
+
+
+
+
+    def r_objective_fn():
+        pass
 
 
 
