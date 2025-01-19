@@ -35,20 +35,21 @@ class RegimeData:
     def __post_init__(self):
         self.yw_subsample = zip(self.y_subsample, self.w_subsample)
     
-    def compute_objective_fn(self, objective_fn, guide):
-        return objective_fn(guide, self.yw_subsample)
+    def compute_fn(self, fn, dist):
+        return fn(dist(self.label), self.yw_subsample)
         
     
 # TODO: inheritance?
-class ZW():
-    def __init__(self):
+class ZW(ABC):
+    
+    @abstractmethod
+    def z_given_w_log_prob_under_regime(self, z_sample, regime):
+        """
+        p(z|w), should take z_obs and regime label
+        """
         raise NotImplementedError
 
-class ZCW(ZW):
-    def __init__(self):
-        raise NotImplementedError
-
-class MixtureWZ(ZCW):
+class MixtureZW(ZW):
     def __init__(self, f_encoder, g_decoder, weights, temperature):
         # TODO: unsure ???
         super().__init__()
@@ -68,14 +69,39 @@ class MixtureWZ(ZCW):
         # self.g_encoder negative log likelihood based on mixture label ?
 
 
-# TODO: definte these
-class YZ():
-    def __init__(self):
+class YZ(ABC):
+
+    @abstractmethod
+    def y_given_z_log_prob(self):
         raise NotImplementedError
 
+
 class PyroModelYZ(YZ):
-    def __init__(self):
-        raise NotImplementedError
+
+    def __init__(self, model):
+        self.model = model
+
+    # TODO: finish this
+    def map_to_sample_sites(self, sample):
+        return
+
+    # TODO: finish this
+    def y_given_z_log_prob(self, sample):
+
+        posterior_sample = sample
+
+        conditioning_dict = self.map_to_sample_sites(posterior_sample)
+
+        model_trace = pyro.poutine.trace(
+            pyro.poutine.condition(self.model, data=conditioning_dict)
+        ).get_trace(
+            # model args
+        )
+        model_logprob = model_trace.log_prob_sum()
+
+        return model_logprob
+
+    
 
 
 
@@ -131,23 +157,23 @@ class WZY(ABC):
     device = None
     
     def __init__(self, myattr: int):
-        # need to set up data and labels
-        # TODO: doo that
+        # need to set up data and labels and regimes
+        # TODO: doo that. also for the children
         # we also need to make sure to call super init in children...
         raise NotImplementedError
 
-    def p_z_given_w_log_prob(self) -> torch.Tensor:
+
+    def z_given_w_log_prob(self) -> torch.Tensor:
         """
         p(z|w)
         """
+        logprobs = torch.tensor(0.0)
         for r in self.regimes:
-            # compute for each one
-            # add it up
-            pass
-        raise NotImplementedError
+            logprobs += self.zw.z_given_w_log_prob_under_regime(r)
+        return logprobs
 
     @abstractmethod
-    def p_yz_given_w_log_prob(
+    def yz_given_w_log_prob(
         self, label: MixtureLabel,
     ) -> torch.Tensor:
         """
@@ -182,14 +208,13 @@ class WZY(ABC):
         # get z samples from guide for approximation of expectation
         q_sample, q_logprob = self.q_guide(q_label).rsample_and_log_prob()
         # is this only valid for the choice of y and w used to train?
-        return self.p_yz_given_w_log_prob(q_sample) - q_logprob
+        return self.yz_given_w_log_prob(q_sample) - q_logprob
     
     def q_elbo_objective(self, q_labels, weights):
         objective = torch.tensor(0.0)
         for q_label in q_labels:
             obj = self.q_elbo_objective_single_label(q_label)
             
-    
     def r_elbo_objective_single_label(self, r_label):
         """
         p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
@@ -278,7 +303,7 @@ class EncoderFlowGMM(RealNVPTabular):
         
         if prior is None:
             self.prior = SSLGaussMixture(
-                means=3.5*torch.tensor([[-1.0, -1.0], [1.0, 1.0]])
+                means=3.5*torch.tensor([[-1.0,-1.0],[1.0,1.0]])
             ) # TODO: fix this
 
         self.classify = self.prior.classify
@@ -503,15 +528,14 @@ def simple_classifier_test():
         dataset.append((x, y))
 
     clsf = EncoderMLP(1, 10, 2)
-
-    # clsf = EncoderFlowGMM(
-    #     num_coupling_layers=5, in_dim=1, num_layers=2, hidden_dim=512
-    # )
-
     clsf_optim = torch.optim.Adam(
         clsf.parameters(),
         lr=1e-3,
     )
+
+    # clsf = EncoderFlowGMM(
+    #     num_coupling_layers=5, in_dim=1, num_layers=2, hidden_dim=512
+    # )
     # clsf_optim = clsf.optimizer
 
     epbar = tqdm(range(1000))
@@ -536,7 +560,7 @@ def simple_classifier_test():
             val_loss = clsf.loss(out, y)
             # if i % 100 == 0:
             #     pbar.set_description(f"train | test : {loss:.2f} | {val_loss:.2f}")
-        if epoch % 100 == 0:
+        if epoch % 10 == 0:
             epbar.set_description(f"train | test : {loss:.2f} | {val_loss:.2f}")
 
     x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
