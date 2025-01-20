@@ -19,6 +19,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from scripts.utils import ConditionalGaussianMixture
+
+from copy import deepcopy
+
 MixtureLabel = torch.Tensor
 # Observation = torch.Tensor
 Observation = Any
@@ -54,24 +58,15 @@ class ZW(ABC):
     #     raise NotImplementedError
 
 
-class MixtureZW(ZW):
-    def __init__(self, f_encoder, g_decoder, weights, temperature):
-        # TODO: unsure ???
-        super().__init__()
-        self.f_encoder = f_encoder
-        self.g_decoder = g_decoder
-        self.weights = weights
-        self.temperature = temperature
+class GaussianMixtureTwoMoonsZW(ZW):
 
-    def rsample_and_logprob(self, sample_shape):
-        raise NotImplementedError
+    def __init__(self, device):
+        self.dist = ConditionalGaussianMixture(
+            n_context=1, n_features=2
+        ).to(device)
 
-    def rsample(self, sample_shape):
-        raise NotImplementedError
-
-    def log_prob(self, sample):
-        raise NotImplementedError
-        # self.g_encoder negative log likelihood based on mixture label ?
+    def z_given_w_log_prob_regime(self, regime):
+        return self.dist(regime.label).log_prob(regime.z_subsample)
 
 
 class YZ(ABC):
@@ -106,8 +101,13 @@ class PyroStatesModelYZ(YZ):
     
     
 class PyroTwoMoonsYZ(PyroStatesModelYZ):
+
+    def __init__(self, model, device):
+        super().__init__(model)
+        self.device = device
  
     def map_to_sample_sites(self, sample):
+
         single_sample = len(sample.shape) == 1
         if single_sample:
             sample = sample.unsqueeze(0)
@@ -119,14 +119,13 @@ class PyroTwoMoonsYZ(PyroStatesModelYZ):
     def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
 
         conditioning_dict = self.map_to_sample_sites(regime.z_subsample)
-
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
             states=regime.y_subsample # here y_subsample should have states?
         )
-        model_logprob = model_trace.log_prob_sum()
 
+        model_logprob = model_trace.log_prob_sum()
         return model_logprob
 
 
@@ -147,7 +146,7 @@ class RegimeAssigner(ABC):
         raise NotImplementedError
 
     def make_regime(self, y_subsample, w_subsample, weight):
-        label = self.assign_mixture_label(y_subsample, w_subsample)
+        label = self.assign_label(w_subsample)
         return RegimeData(
             label=label,
             weight=weight,
@@ -155,12 +154,17 @@ class RegimeAssigner(ABC):
             w_subsample=w_subsample
         )
     
-    def make_regimes(self, y_subsample_list, w_subsample_list, weight_list):
+    def make_regimes(self, y_subsample_list, w_subsample_list, weight_list=None):
+        if weight_list is None:
+            weight_list = [
+            torch.tensor(1.0 / len(y_subsample_list)) 
+            for _ in range(len(y_subsample_list))
+        ]
         yww_list = zip(y_subsample_list, w_subsample_list, weight_list)
         regimes = []
         for y_subsample, w_subsample, weight in yww_list:
             regimes.append(
-                self.build_regime(
+                self.make_regime(
                     y_subsample, w_subsample, weight
                 )
             )
@@ -191,7 +195,18 @@ class RegimeAssigner(ABC):
         return self.build_regimes(
             y_subsample_list, w_subsample_list, weight_list
         )
+    
 
+class ThresholdTwoMoonsRA(RegimeAssigner):
+
+    def __init__(self, device):
+        self.device = device
+
+    def assign_label(self, w_subsample):
+        if w_subsample > .5:
+            return torch.tensor([1.0]).to(self.device)
+        else:
+            return torch.tensor([0.0]).to(self.device)
 
 
 # TODO: define a framework:
@@ -237,22 +252,27 @@ class WZY(ABC):
     r_guide = None
 
     #
-    w_data: Observation
-    y_data: Observation
-    # labels: MixtureLabel
+    # w_subsample_list: list[Any]
+    # y_subsample_list: list[Any]
 
     yw_regimes: list[RegimeData]
-    y_regimes: list[RegimeData]
-    w_regimes: list[RegimeData]
     
     # make a dataclass for all these kinds of params
     device = None
     
-    def __init__(self, myattr: int):
-        # need to set up data and labels and regimes
-        # TODO: doo that. also for the children
-        # we also need to make sure to call super init in children...
-        raise NotImplementedError
+    def __init__(self, zw, yz, ra, q_guide, r_guide, w_subsample_list, y_subsample_list):
+
+        self.zw = zw
+        self.yz = yz
+        self.ra = ra
+        self.q_guide = q_guide
+        self.r_guide = r_guide
+
+        self.yw_regimes = \
+            self.ra.make_regimes(y_subsample_list, w_subsample_list)
+        self.y_regimes = deepcopy(self.yw_regimes)
+        for regime in self.y_regimes:
+            regime.w_subsample = None # unnecssary though
 
     def q_elbo_objective(self, regimes=None, **kwargs):
         """
@@ -262,7 +282,7 @@ class WZY(ABC):
         if regimes is None:
             regimes = self.yw_regimes
         elbo = torch.tensor(0.0).to(self.device)
-        for regime in self.regimes:
+        for regime in regimes:
             # get z samples from guide for approximation of expectation
             z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
             regime.z_subsample = z_sample
@@ -281,7 +301,7 @@ class WZY(ABC):
         if regimes is None:
             regimes = self.y_regimes
         elbo = torch.tensor(0.0).to(self.device)
-        for regime in self.regimes:
+        for regime in regimes:
             w_sample, w_logprob = self.r_guide(regime.label).rsample_and_log_prob()
             regime.w_subsample = w_sample
             # regimes should contain the y value and appropriate label corresponding to w ?
