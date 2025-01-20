@@ -19,7 +19,7 @@ from pyro.infer.autoguide import AutoIAFNormal
 import pyro
 from tqdm import tqdm
 
-from scripts.wzy.wzy_core import PyroTwoMoonsYZ, RegimeData
+from scripts.wzy.wzy_core import *
 
 
 @command()
@@ -233,21 +233,36 @@ def run(
     # print(q_guide(label).rsample_and_log_prob())
     # return
 
-    yz = PyroTwoMoonsYZ(wzy_model)
+    yz = PyroTwoMoonsYZ(wzy_model, device)
 
-    print("\nfailure z in failure regime")
-    l = torch.tensor(0.0).to(device)
-    for i in range(n_days):
-        failure_regimes[i].z_subsample = z_list_failure[i]
-        l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
-    print(l)
+    # print("\nfailure z in failure regime")
+    # l = torch.tensor(0.0).to(device)
+    # for i in range(n_days):
+    #     failure_regimes[i].z_subsample = z_list_failure[i]
+    #     l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
+    # print(l)
 
-    print("\nnominal z in failure regime")
-    l = torch.tensor(0.0).to(device)
-    for i in range(n_days):
-        failure_regimes[i].z_subsample = z_list_nominal[i]
-        l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
-    print(l)
+    # print("\nnominal z in failure regime")
+    # l = torch.tensor(0.0).to(device)
+    # for i in range(n_days):
+    #     failure_regimes[i].z_subsample = z_list_nominal[i]
+    #     l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
+    # print(l)
+
+    ra = ThresholdTwoMoonsRA(device)
+    zw = GaussianMixtureTwoMoonsZW(device)
+
+    wzy = WZY(
+        zw=zw,
+        yz=yz,
+        ra=ra,
+        q_guide=q_guide,
+        r_guide=None,
+        w_subsample_list=w_list_failure+w_list_nominal,
+        y_subsample_list=y_list_failure+y_list_nominal,
+    )
+
+    print(wzy.q_elbo_loss())
 
 
 if __name__ == "__main__":
