@@ -107,11 +107,16 @@ class PyroStatesModelYZ(YZ):
     
 class PyroTwoMoonsYZ(PyroStatesModelYZ):
  
-    def map_to_sample_sites(self, z_sample):
-        # print(z_sample)
-        conditioning_dict = {}
-        for day_ind in range(len(z_sample)):
-            conditioning_dict[f'{day_ind}_z'] = z_sample[day_ind]
+    def map_to_sample_sites(self, sample):
+        single_sample = len(sample.shape) == 1
+        if single_sample:
+            sample = sample.unsqueeze(0)
+        assert sample.shape[-1] == 2
+
+        conditioning_dict = {
+            f'{day_ind}_z': sample[day_ind]
+            for day_ind in range(len(sample))
+        }
         return conditioning_dict
 
     def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
@@ -137,7 +142,7 @@ class RegimeAssigner(ABC):
     #     raise NotImplementedError
 
     @abstractmethod
-    def assign_label(self, y_subsample, w_subsample):
+    def assign_label(self, w_subsample):
         """
         the main thing implementations of this class need to do?
         i.e. take subsample and assign mixture label
