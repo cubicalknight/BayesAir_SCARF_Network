@@ -16,46 +16,42 @@ import torch
 import torch.nn as nn
 from enum import Enum, auto
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 MixtureLabel = torch.Tensor
-Observation = torch.Tensor
+# Observation = torch.Tensor
+Observation = Any
 
 @dataclass
 class RegimeData:
-    
+
     label: MixtureLabel
     weight: torch.Tensor # like how much it takes up?
-    y_subsample: list[Observation] 
-    w_subsample: list[Observation]
-    name: str = ""
-
-    yw_subsample = None
-
-    def __post_init__(self):
-        self.yw_subsample = zip(self.y_subsample, self.w_subsample)
-    
-    def compute_fn(self, fn, dist):
-        return fn(dist(self.label), self.yw_subsample)
+    y_subsample: Optional[list[Observation]] = None
+    z_subsample: Optional[list[Observation]] = None
+    w_subsample: Optional[list[Observation]] = None
+    x_states: Optional[list[Any]] = None
+    name: Optional[str] = None
         
     
 # TODO: inheritance?
 class ZW(ABC):
     
     @abstractmethod
-    def z_given_w_log_prob_regime(self, z_sample, regime):
+    def z_given_w_log_prob_regime(self, regime):
         """
         p(z; r) * r.weight, e.g. r = f(w)
         """
         raise NotImplementedError
     
-    @abstractmethod
-    def z_given_w_log_prob(self, z_sample, w_sample):
-        """
-        p(z|w)
-        TODO: label?
-        """
-        raise NotImplementedError
+    # @abstractmethod
+    # def z_given_w_log_prob(self, z_sample, w_sample):
+    #     """
+    #     p(z|w)
+    #     TODO: label?
+    #     """
+    #     raise NotImplementedError
 
 
 class MixtureZW(ZW):
@@ -81,40 +77,38 @@ class MixtureZW(ZW):
 class YZ(ABC):
 
     @abstractmethod
-    def y_given_z_log_prob_regime(self, z_samples, regime):
+    def y_given_z_log_prob_regime(self, regime):
         """
         f(y|z; regime), e.g. regime = f(w)
         """
         raise NotImplementedError
     
-    @abstractmethod
-    def y_given_z_log_prob(self, y_sample, z_sample):
-        """
-        f(y|z)
-        """
-        raise NotImplementedError
+    # @abstractmethod
+    # def y_given_z_log_prob(self, y_sample, z_sample):
+    #     """
+    #     f(y|z)
+    #     """
+    #     raise NotImplementedError
 
 
-class PyroModelYZ(YZ):
+class PyroModelYZStateX(YZ):
 
     def __init__(self, model):
         self.model = model
+    
+    @abstractmethod
+    def map_to_sample_sites(self, z_sample):
+        raise NotImplementedError
 
     # TODO: finish this
-    def map_to_sample_sites(self, sample):
-        return
+    def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
 
-    # TODO: finish this
-    def y_given_z_log_prob(self, sample):
-
-        posterior_sample = sample
-
-        conditioning_dict = self.map_to_sample_sites(posterior_sample)
+        conditioning_dict = self.map_to_sample_sites(regime.z_subsample)
 
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
-            # model args
+            states=regime.x_states
         )
         model_logprob = model_trace.log_prob_sum()
 
@@ -124,8 +118,17 @@ class PyroModelYZ(YZ):
 
 class RegimeAssigner(ABC):
 
+    # @property
+    # @abstractmethod
+    # def device(self):
+    #     raise NotImplementedError
+
     @abstractmethod
     def assign_label(self, y_subsample, w_subsample):
+        """
+        the main thing implementations of this class need to do?
+        i.e. take subsample and assign mixture label
+        """
         raise NotImplementedError
 
     def make_regime(self, y_subsample, w_subsample, weight):
@@ -223,7 +226,9 @@ class WZY(ABC):
     y_data: Observation
     # labels: MixtureLabel
 
-    regimes: list[RegimeData]
+    yw_regimes: list[RegimeData]
+    y_regimes: list[RegimeData]
+    w_regimes: list[RegimeData]
     
     # make a dataclass for all these kinds of params
     device = None
@@ -234,69 +239,50 @@ class WZY(ABC):
         # we also need to make sure to call super init in children...
         raise NotImplementedError
 
-    def q_elbo_objective(self, regimes=None):
+    def q_elbo_objective(self, regimes=None, **kwargs):
         """
         E_q [ log p(y,z|w) - log q(z|y,w) ]
         log p(y,z|w) = log p(y|z) + log p(z|w)
         """
         if regimes is None:
-            regimes = self.regimes
+            regimes = self.yw_regimes
         elbo = torch.tensor(0.0).to(self.device)
         for regime in self.regimes:
             # get z samples from guide for approximation of expectation
             z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
+            regime.z_subsample = z_sample
             elbo += (
-                self.yz.y_given_z_log_prob_regime(z_sample, regime) + 
-                self.zw.z_given_w_log_prob_regime(z_sample, regime) - 
+                self.yz.y_given_z_log_prob_regime(regime, **kwargs) + 
+                self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
                 z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
         return elbo
-    
-    def q_elbo_loss(self):
-        return -self.q_elbo_objective
             
-    def r_elbo_objective(self, regimes=None):
+    def r_elbo_objective(self, regimes=None, **kwargs):
         """
         E_r [ p^ (y|w) - log r(w|y) ]
         p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ] = ELBO_q (y, w)
         """
         if regimes is None:
-            regimes = self.regimes
+            regimes = self.y_regimes
         elbo = torch.tensor(0.0).to(self.device)
-        for r in self.regimes:
-            w_sample, w_logprob = self.r_guide(r.label).rsample_and_log_prob()
-            # build regime ???
-            regimes = self.ra.make_regimes_no_subsample() # TODO:fix this. because need to weight down?
+        for regime in self.regimes:
+            w_sample, w_logprob = self.r_guide(regime.label).rsample_and_log_prob()
+            regime.w_subsample = w_sample
             # regimes should contain the y value and appropriate label corresponding to w ?
             elbo += (
-                self.q_elbo_objective(regimes) - w_logprob
+                self.q_elbo_objective(regimes, **kwargs) - w_logprob
             )
         return elbo
     
-    def r_elbo_loss(self, regimes=None):
-        return -self.r_elbo_objective()
+    def q_elbo_loss(self, **kwargs):
+        return -self.q_elbo_objective(**kwargs)
     
-
-
-
-
-
-    
-    # @abstractmethod
-    # def z_logprob(self):
-    #     raise NotImplementedError
-    
-    # @abstractmethod
-    # def w_given_z_logprob(self):
-    #     raise NotImplementedError
-    
-    # # @abstractmethod
-    # def z_given_y_logprob(self):
-    #     raise NotImplementedError
+    def r_elbo_loss(self, **kwargs):
+        return -self.r_elbo_objective(**kwargs)
 
 
     
-    # TODO: the util stuff
 
 
 
