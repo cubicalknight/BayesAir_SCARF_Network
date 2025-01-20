@@ -19,6 +19,8 @@ from pyro.infer.autoguide import AutoIAFNormal
 import pyro
 from tqdm import tqdm
 
+from scripts.wzy.wzy_core import PyroTwoMoonsYZ, RegimeData
+
 
 @command()
 @option("--n-nominal", default=1000, help="# of nominal examples")
@@ -148,106 +150,69 @@ def run(
         plt.gca().set_aspect("equal")
         plt.show()
 
-    def sample_y_given_something(k, w_obs=None, failure_obs=None, theta_obs=None):
-        with pyro.plate("samples", k, dim=-2):
-            samples = w_z_y_model(w_obs=w_obs, failure_obs=failure_obs, theta_obs=theta_obs)
-        # print(samples)
-        y = samples.reshape(-1,2).detach().cpu()
-        return y
+    # def sample_y_given_something(k, w_obs=None, failure_obs=None, theta_obs=None):
+    #     with pyro.plate("samples", k, dim=-2):
+    #         samples = w_z_y_model(w_obs=w_obs, failure_obs=failure_obs, theta_obs=theta_obs)
+    #     # print(samples)
+    #     y = samples.reshape(-1,2).detach().cpu()
+    #     return y
 
-    n_days = 100
+    n_days = 500
 
-    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
+    # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
+    # y_obs, w_obs, states = generate_two_moons_data_using_model(n_days, device, return_states=True)
     # plot_things(y_obs, w_obs > .5, "training data")
 
-    w_z_y_model = functools.partial(
-        two_moons_w_z_y_model,
-        n=n_days,
+    y_failure, w_failure, states_failure, z_failure = \
+        generate_two_moons_data_using_model(
+            n_days, device, 
+            failure_only=True, return_states=True, return_z=True
+        )
+    y_nominal, w_nominal, states_nominal, z_nominal = \
+        generate_two_moons_data_using_model(
+            n_days, device, 
+            nominal_only=True, return_states=True, return_z=True
+        )
+    
+    nominal_regime = regime = RegimeData(
+        label=torch.tensor([0.0], device=device), 
+        weight=torch.tensor(0.5, device=device),
+        y_subsample=states_nominal,
+        w_subsample=w_nominal,
+    )
+
+    failure_regime = regime = RegimeData(
+        label=torch.tensor([1.0], device=device), 
+        weight=torch.tensor(0.5, device=device),
+        y_subsample=states_failure,
+        w_subsample=w_failure,
+    )
+
+    wzy_model = functools.partial(
+        two_moons_wzy_model,
         device=device,
     )
 
-    f = 1 - torch.randn(n_days) * .01
-    # y = sample_y_given_something(1, failure_obs=f)
-    y = sample_y_given_something(1, w_obs=w_obs)
-    # plot_things(y, torch.ones(n_days), "sample test")
+    q_guide = zuko.flows.NSF(
+        features=2,
+        context=1,
+        hidden_features=(64, 64),
+    ).to(device)
+    # print(states)
+    # label = torch.tensor([1.0], device=device)
+    # print(q_guide(label).rsample_and_log_prob())
+    # label = torch.tensor([0.0], device=device)
+    # print(q_guide(label).rsample_and_log_prob())
+    # return
 
-    w_z_y_guide = AutoIAFNormal(w_z_y_model)
+    yz = PyroTwoMoonsYZ(wzy_model)
 
-    # Train the model
-    # set up the optimizer
-    n_steps = n_steps
-    gamma = 0.1  # final learning rate will be gamma * initial_lr
-    lrd = gamma ** (1 / n_steps)
-    optim = pyro.optim.ClippedAdam({"lr": lr, "lrd": lrd})
-    elbo = pyro.infer.Trace_ELBO(num_particles=1)
+    failure_regime.z_subsample = z_failure
+    print(yz.y_given_z_log_prob_regime(failure_regime))
 
-    # setup the inference algorithm
-    svi = pyro.infer.SVI(
-        w_z_y_model, 
-        w_z_y_guide, 
-        optim, 
-        loss=elbo,
-    )
+    failure_regime.z_subsample = z_nominal
+    print(yz.y_given_z_log_prob_regime(failure_regime))
 
-    # do gradient steps
-    pbar = tqdm(range(n_steps))
-    losses = []
-    for step in pbar:
-        loss = svi.step(w_obs=w_obs, y_obs=y_obs)
-        losses.append(loss)
-        if step % 10 == 0:
-            pbar.set_description(f"ELBO loss: {loss:.2f}")
-
-    # plt.figure(figsize=(8,8))
-    # plt.plot(losses)
-    # plt.show()
-
-    k = 10
-
-    y_obs, w_obs = generate_two_moons_data_hierarchical(n_days*k, device, nominal=True)
-    plot_things(y_obs, w_obs > .5, "test data")
-    # print(w_obs)
-
-    # predictive = pyro.infer.Predictive(
-    #     w_z_y_model, 
-    #     guide=w_z_y_guide, 
-    #     num_samples=100,
-    # )
-    # with pyro.plate("samples", n_samples, dim=-1):
-    #     posterior_samples = auto_guide(states, dt)
-    with pyro.plate("samples", k, dim=-2):
-        samples = w_z_y_guide(w_obs=w_obs, y_obs=y_obs)
-
-    # print(samples)
-
-    # w_post = samples['w'].flatten()
-    # z_post = samples['z'].reshape(-1, 2)
-    # t_post = samples['theta'].flatten()
-    # f_post = samples['failure'].flatten()
-    # w_post = samples['w'].mean(dim=0)
-    # z_post = samples['z'].mean(dim=0).detach()
-    t_post = samples['theta']
-    f_post = samples['failure']
-
-    t_post_plt = t_post.reshape(-1).detach().cpu()
-    f_post_plt = f_post.reshape(-1).detach().cpu()
-
-    print(t_post_plt.min(), t_post_plt.max())
-
-    # print(w_post)
-
-    plt.figure(figsize=(4, 4))
-    plt.hist(f_post_plt, density=True, bins=64, label='failure',alpha=.5)
-    # plt.hist(t_post_plt, density=True, bins=64, label='theta',alpha=.5)
-    plt.legend()
-    plt.show()
-
-    y_obs = sample_y_given_something(k, failure_obs=f_post, theta_obs=t_post)
-    plot_things(y_obs, f_post_plt, 'using failure/theta post')
-
-    # y_obs = sample_y_given_something(k, failure_obs=f_post)
-    # plot_things(y_obs, f_post_plt, 'using failure post')
-    
 
 if __name__ == "__main__":
     run()

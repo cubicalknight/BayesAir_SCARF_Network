@@ -31,7 +31,7 @@ class RegimeData:
     y_subsample: Optional[list[Observation]] = None
     z_subsample: Optional[list[Observation]] = None
     w_subsample: Optional[list[Observation]] = None
-    x_states: Optional[list[Any]] = None
+    # x_states: Optional[list[Any]] = None
     name: Optional[str] = None
         
     
@@ -91,7 +91,7 @@ class YZ(ABC):
     #     raise NotImplementedError
 
 
-class PyroModelYZStateX(YZ):
+class PyroStatesModelYZ(YZ):
 
     def __init__(self, model):
         self.model = model
@@ -100,7 +100,20 @@ class PyroModelYZStateX(YZ):
     def map_to_sample_sites(self, z_sample):
         raise NotImplementedError
 
-    # TODO: finish this
+    @abstractmethod
+    def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
+        raise NotImplementedError
+    
+    
+class PyroTwoMoonsYZ(PyroStatesModelYZ):
+ 
+    def map_to_sample_sites(self, z_sample):
+        # print(z_sample)
+        conditioning_dict = {}
+        for day_ind in range(len(z_sample)):
+            conditioning_dict[f'{day_ind}_z'] = z_sample[day_ind]
+        return conditioning_dict
+
     def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
 
         conditioning_dict = self.map_to_sample_sites(regime.z_subsample)
@@ -108,7 +121,7 @@ class PyroModelYZStateX(YZ):
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
-            states=regime.x_states
+            states=regime.y_subsample # here y_subsample should have states?
         )
         model_logprob = model_trace.log_prob_sum()
 
