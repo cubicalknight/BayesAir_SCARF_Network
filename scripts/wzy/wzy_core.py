@@ -25,8 +25,8 @@ Observation = torch.Tensor
 class RegimeData:
     
     label: MixtureLabel
-    weight: torch.Tensor
-    y_subsample: list[Observation]
+    weight: torch.Tensor # like how much it takes up?
+    y_subsample: list[Observation] 
     w_subsample: list[Observation]
     name: str = ""
 
@@ -43,11 +43,20 @@ class RegimeData:
 class ZW(ABC):
     
     @abstractmethod
-    def z_given_w_log_prob_under_regime(self, z_sample, regime):
+    def z_given_w_log_prob_regime(self, z_sample, regime):
         """
-        p(z|w), should take z_obs and regime label
+        p(z; r) * r.weight, e.g. r = f(w)
         """
         raise NotImplementedError
+    
+    @abstractmethod
+    def z_given_w_log_prob(self, z_sample, w_sample):
+        """
+        p(z|w)
+        TODO: label?
+        """
+        raise NotImplementedError
+
 
 class MixtureZW(ZW):
     def __init__(self, f_encoder, g_decoder, weights, temperature):
@@ -72,7 +81,17 @@ class MixtureZW(ZW):
 class YZ(ABC):
 
     @abstractmethod
-    def y_given_z_log_prob(self):
+    def y_given_z_log_prob_regime(self, z_samples, regime):
+        """
+        f(y|z; regime), e.g. regime = f(w)
+        """
+        raise NotImplementedError
+    
+    @abstractmethod
+    def y_given_z_log_prob(self, y_sample, z_sample):
+        """
+        f(y|z)
+        """
         raise NotImplementedError
 
 
@@ -101,7 +120,47 @@ class PyroModelYZ(YZ):
 
         return model_logprob
 
+
+def RegimeAssigner(ABC):
+
+    @abstractmethod
+    def assign_mixture_label(self, y_subsample, w_subsample):
+        raise NotImplementedError
+
+    def build_regime(self, y_subsample, w_subsample, weight):
+        label = self.assign_mixture_label(y_subsample, w_subsample)
+        return RegimeData(
+            label=label,
+            weight=weight,
+            y_subsample=y_subsample,
+            w_subsample=w_subsample
+        )
     
+    def build_regimes(self, y_subsample_list, w_subsample_list, weight_list):
+        yww_list = zip(y_subsample_list, w_subsample_list, weight_list)
+        regimes = []
+        for y_subsample, w_subsample, weight in yww_list:
+            regimes.append(
+                self.build_regime(
+                    y_subsample, w_subsample, weight
+                )
+            )
+        return regimes
+    
+    def build_regimes_per_point(self, y_samples, w_samples):
+        weight_list = [
+            torch.tensor(1.0 / len(y_samples)) 
+            for _ in range(len(y_samples))
+        ]
+        y_subsample_list = [
+            ys for ys in y_samples
+        ]
+        w_subsample_list = [
+            ws for ws in w_samples
+        ]
+        return self.build_regimes(y_samples, w_samples)
+
+
 
 
 
@@ -162,68 +221,45 @@ class WZY(ABC):
         # we also need to make sure to call super init in children...
         raise NotImplementedError
 
-
-    def z_given_w_log_prob(self) -> torch.Tensor:
-        """
-        p(z|w)
-        """
-        logprobs = torch.tensor(0.0)
-        for r in self.regimes:
-            logprobs += self.zw.z_given_w_log_prob_under_regime(r)
-        return logprobs
-
-    @abstractmethod
-    def yz_given_w_log_prob(
-        self, label: MixtureLabel,
-    ) -> torch.Tensor:
-        """
-        p(y,z|w) 
-        """
-        for r in self.regimes:
-            # compute for each one
-            # add it up
-            # we should have different weights
-            pass
-        raise NotImplementedError
-    
-    @abstractmethod
-    def map_observation_to_mixture_label(
-        self, 
-        y_obs: Observation, 
-        w_obs: Observation,
-     ) -> MixtureLabel:
-        """
-        using observation (probably w)
-        in some way, to determine which regime to use
-        TODO: can we support mixtures of regimes?
-        i think following the charles format allows you do that
-        we can also support things general 
-        """
-        raise NotImplementedError
-
-    def q_elbo_objective_single_label(self, q_label):
+    def q_elbo_objective(self, regimes=None):
         """
         E_q [ log p(y,z|w) - log q(z|y,w) ]
+        log p(y,z|w) = log p(y|z) + log p(z|w)
         """
-        # get z samples from guide for approximation of expectation
-        q_sample, q_logprob = self.q_guide(q_label).rsample_and_log_prob()
-        # is this only valid for the choice of y and w used to train?
-        return self.yz_given_w_log_prob(q_sample) - q_logprob
+        if regimes is None:
+            regimes = self.regimes
+        elbo = torch.tensor(0.0).to(self.device)
+        for regime in self.regimes:
+            # get z samples from guide for approximation of expectation
+            z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
+            elbo += (
+                self.yz.y_given_z_log_prob_regime(z_sample, regime) + 
+                self.zw.z_given_w_log_prob_regime(z_sample, regime) - 
+                z_logprob
+            ) * regime.weight # weight can be equal, and maybe divide by flights ??
+        return elbo
     
-    def q_elbo_objective(self, q_labels, weights):
-        objective = torch.tensor(0.0)
-        for q_label in q_labels:
-            obj = self.q_elbo_objective_single_label(q_label)
+    def q_elbo_loss(self):
+        return -self.q_elbo_objective
             
-    def r_elbo_objective_single_label(self, r_label):
+    def r_elbo_objective(self, regimes=None):
         """
-        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ]
         E_r [ p^ (y|w) - log r(w|y) ]
+        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ] = ELBO_q (y, w)
         """
-        r_sample, r_logprob = self.r_guide(r_label).rsample_and_log_prob()
-        q_labels = [] # TOOD: r_samples mapped to labels
-        for q_label in q_labels:
-            self.q_elbo_objective(self.y_observations, r_sample)
+        if regimes is None:
+            regimes = self.regimes
+        elbo = torch.tensor(0.0).to(self.device)
+        for r in self.regimes:
+            w_sample, w_logprob = self.r_guide(r.label).rsample_and_log_prob()
+            # build regime ???
+            regimes = [RegimeData()] # TODO: !!!
+            # regimes should contain the y value and appropriate label corresponding to w ?
+            elbo += (
+                self.q_elbo_objective(regimes)
+            )
+
+
 
 
     
@@ -517,17 +553,17 @@ def simple_classifier_test():
 
     torch.manual_seed(0)
 
-    n = 20
+    n = 10
     train_n = n-1
     test_n = 1
     dataset = []
     for _ in range(train_n + test_n):
-        x = torch.rand(20)
+        x = torch.rand(10)
         y = (x > .5).long()
         x = x.reshape(-1,1)
         dataset.append((x, y))
 
-    clsf = EncoderMLP(1, 10, 2)
+    clsf = EncoderMLP(1, 10, 1)
     clsf_optim = torch.optim.Adam(
         clsf.parameters(),
         lr=1e-3,
