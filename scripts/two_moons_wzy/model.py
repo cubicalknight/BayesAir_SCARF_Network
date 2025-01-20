@@ -380,9 +380,9 @@ def two_moons_wzy_model_even_simpler(device, states, **kwargs):
         ),
     )
 
-    loc = failure - .5
+    loc = failure * 2.0 - 1.0
 
-    z_x = loc
+    z_x = loc 
     z_y = loc
 
     z = torch.stack(
