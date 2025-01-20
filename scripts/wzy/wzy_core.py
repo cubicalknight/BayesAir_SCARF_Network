@@ -134,12 +134,12 @@ class PyroTwoMoonsYZ(PyroStatesModelYZ):
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
-            states=regime.y_subsample # here y_subsample should have states?
-            # y_obs=regime.y_subsample
+            # states=regime.y_subsample # here y_subsample should have states?
+            y_obs=regime.y_subsample
         )
 
         # model_logprob = model_trace.log_prob_sum()
-        model_logprob = model_trace.log_prob_sum() #/ len(regime.w_subsample)
+        model_logprob = model_trace.log_prob_sum() / len(regime.w_subsample)
         return model_logprob
 
 
@@ -342,14 +342,23 @@ class WZY(ABC):
         for regime in regimes:
             regime.label = self.ra.assign_label(regime.w_subsample)
             # get z samples from guide for approximation of expectation
+            # k = 10
+            # z_samples = torch.zeros((k,2), device=self.device)
+            # z_logprobs = torch.zeros((k,), device=self.device)
+            # for i in range(k):
+            #     z_samples[i], z_logprobs[i] = self.q_guide(regime.label).rsample_and_log_prob()
+            # z_sample = z_samples
+            # z_logprob = z_logprobs.mean()
             z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
             regime.z_subsample = z_sample
             # n = len(regime.w_subsample)
             elbo += (
-                self.yz.y_given_z_log_prob_regime(regime, **kwargs) + 
-                # self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
-                z_logprob
+                self.yz.y_given_z_log_prob_regime(regime, **kwargs) 
+                # + self.zw.z_given_w_log_prob_regime(regime, **kwargs) 
+                - z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
+            # print(z_sample, z_logprob)
+            # print(self.yz.y_given_z_log_prob_regime(regime, **kwargs), z_logprob)
         return elbo
             
     def r_elbo_objective(self, regimes=None, **kwargs):
