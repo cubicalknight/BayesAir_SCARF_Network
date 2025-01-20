@@ -175,8 +175,8 @@ def run(
         plt.gca().set_aspect("equal")
         plt.show()
 
-    n_days = 20
-    m_per_day = 10
+    n_days = 50
+    m_per_day = 20
 
     # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
     # y_obs, w_obs, states = generate_two_moons_data_using_model(n_days, device, return_states=True)
@@ -195,8 +195,8 @@ def run(
             even_simpler=True,
         )
     
-    # plot_stuff(y_list_failure, w_list_failure)
-    # plot_stuff(y_list_nominal, w_list_nominal)
+    plot_stuff(y_list_failure, w_list_failure)
+    plot_stuff(y_list_nominal, w_list_nominal)
 
     nominal_regimes = [
         RegimeData(
@@ -259,6 +259,7 @@ def run(
     # print(l)
 
     ra = ThresholdTwoMoonsRA(device)
+    # ra = MLPTwoMoonsRA(1, 2, 1).to(device)
     zw = GaussianMixtureTwoMoonsZW(device)
 
     wzy = WZY(
@@ -291,23 +292,95 @@ def run(
         zw_optimizer, step_size=lr_steps, gamma=lr_gamma
     )
 
+    ra_optimizer = torch.optim.Adam(
+        wzy.ra.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    ra_scheduler = torch.optim.lr_scheduler.StepLR(
+        ra_optimizer, step_size=lr_steps, gamma=lr_gamma
+    )
+
     losses = []
-    pbar = tqdm(range(100))
+    pbar = tqdm(range(2000))
     for i in pbar:
-        # zw_optimizer.zero_grad()
+        zw_optimizer.zero_grad()
         q_optimizer.zero_grad()
+        ra_optimizer.zero_grad()
+
         loss = wzy.q_elbo_loss()
         loss.backward()
         losses.append(loss.detach())
-        # zw_optimizer.step()
-        # zw_scheduler.step()
+
+        zw_optimizer.step()
+        zw_scheduler.step()
+
         q_optimizer.step()
         q_scheduler.step()
-        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+
+        ra_optimizer.step()
+        ra_scheduler.step()
+
+        pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
 
     plt.figure()
     plt.plot(losses)
     plt.show()
+
+    # losses = []
+    # pbar = tqdm(range(1000))
+    # for i in pbar:
+
+    #     ra_optimizer.zero_grad()
+
+    #     loss = wzy.q_elbo_loss()
+    #     loss.backward()
+    #     losses.append(loss.detach())
+
+    #     ra_optimizer.step()
+    #     ra_scheduler.step()
+
+    #     pbar.set_description(f'w threshold: {wzy.ra.threshold.item()}')
+
+    # plt.figure()
+    # plt.plot(losses)
+    # plt.show()
+
+    # losses = []
+    # pbar = tqdm(range(100))
+    # for i in pbar:
+    #     q_optimizer.zero_grad()
+
+    #     loss = wzy.q_elbo_loss()
+    #     loss.backward()
+    #     losses.append(loss.detach())
+
+    #     q_optimizer.step()
+    #     q_scheduler.step()
+
+    #     pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+
+    # plt.figure()
+    # plt.plot(losses)
+    # plt.show()
+
+    # losses = []
+    # pbar = tqdm(range(1000))
+    # for i in pbar:
+    #     zw_optimizer.zero_grad()
+
+    #     loss = wzy.q_elbo_loss()
+    #     loss.backward()
+    #     losses.append(loss.detach())
+
+    #     zw_optimizer.step()
+    #     zw_scheduler.step()
+
+    #     pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+
+    # plt.figure()
+    # plt.plot(losses)
+    # plt.show()
 
     label = torch.tensor([1.0], device=device)
     samples = q_guide(label).sample((1000,))
@@ -317,13 +390,20 @@ def run(
     samples = q_guide(label).sample((1000,))
     plot_things(samples, 'b')
 
-    # label = torch.tensor([1.0], device=device)
-    # samples = wzy.zw.dist(label).sample((1000,))
-    # plot_things(samples, 'r')
+    label = torch.tensor([1.0], device=device)
+    samples = wzy.zw.dist(label).sample((1000,))
+    plot_things(samples, 'r')
 
-    # label = torch.tensor([0.0], device=device)
-    # samples = wzy.zw.dist(label).sample((1000,))
-    # plot_things(samples, 'b')
+    label = torch.tensor([0.0], device=device)
+    samples = wzy.zw.dist(label).sample((1000,))
+    plot_things(samples, 'b')
+
+    x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
+    # y = torch.tensor([0,0,0,0,0,1,1,1,1,1], dtype=torch.long)
+    # x = x.reshape(-1, 1)
+    for i in range(len(x)):
+        print(f'{x[i].item():.3f} -> {wzy.ra.assign_label(x[i]).item():.3f}')
+    print(f'ra threshold = {wzy.ra.threshold}')
 
 
 

@@ -67,6 +67,18 @@ class GaussianMixtureTwoMoonsZW(ZW):
 
     def z_given_w_log_prob_regime(self, regime):
         return self.dist(regime.label).log_prob(regime.z_subsample)
+    
+class NSFTwoMoonsZW(ZW):
+
+    def __init__(self, device):
+        self.dist = zuko.flows.NSF(
+            features=2,
+            context=1, 
+            hidden_features=(64, 64),
+        ).to(device)
+
+    def z_given_w_log_prob_regime(self, regime):
+        return self.dist(regime.label).log_prob(regime.z_subsample)
 
 
 class YZ(ABC):
@@ -197,17 +209,60 @@ class RegimeAssigner(ABC):
         )
     
 
-class ThresholdTwoMoonsRA(RegimeAssigner):
+class ThresholdTwoMoonsRA(RegimeAssigner, nn.Module):
 
     def __init__(self, device):
+        nn.Module.__init__(self)
         self.device = device
+        self.threshold = nn.Parameter(
+            torch.tensor([0.3]).to(device),
+            requires_grad=True
+        )
+        self.a = torch.tensor(100.0).to(device)
 
     def assign_label(self, w_subsample):
-        if w_subsample > .5:
-            return torch.tensor([1.0]).to(self.device)
-        else:
-            return torch.tensor([0.0]).to(self.device)
+        return nn.functional.sigmoid(
+            self.a * (w_subsample - self.threshold)
+        )
+        
 
+class MLPTwoMoonsRA(nn.Module, RegimeAssigner):
+    """
+    simple multi-layer perceptron for the w -> c mapping
+    building block for a mixture of densities network
+    here we consider the 
+    """
+    def __init__(self, input_dim, hidden_dim=100, n_layers=1, n_classes=2, act_layer=nn.Softplus()):
+        super().__init__()
+
+        modules = []
+        if n_layers < 2:
+            modules.append(nn.Linear(input_dim, n_classes))
+        else:
+            modules.append(nn.Linear(input_dim, hidden_dim))
+            for _ in range(n_layers-2):
+                modules.append(nn.Linear(input_dim, hidden_dim))
+                modules.append(act_layer)
+            modules.append(nn.Linear(hidden_dim, n_classes))
+
+        self.network = nn.Sequential(*modules)
+        self.input_dim = input_dim
+        self.loss = nn.CrossEntropyLoss()
+
+    def forward(self, x):
+        input = x.reshape(-1, self.input_dim)
+        logits = self.network(input) # is this true???
+        return logits
+    
+    def get_mixture_label(self, x):
+        logits = self.forward(x)
+        mixture_label = nn.functional.gumbel_softmax(logits, tau=1, hard=True)
+        return mixture_label
+    
+    def assign_label(self, x):
+        mixture_label = self.get_mixture_label(x)
+        return torch.max(mixture_label, 1)[1]
+    
 
 # TODO: define a framework:
 
@@ -270,9 +325,9 @@ class WZY(ABC):
 
         self.yw_regimes = \
             self.ra.make_regimes(y_subsample_list, w_subsample_list)
-        self.y_regimes = deepcopy(self.yw_regimes)
-        for regime in self.y_regimes:
-            regime.w_subsample = None # unnecssary though
+        # self.y_regimes = deepcopy(self.yw_regimes)
+        # for regime in self.y_regimes:
+        #     regime.w_subsample = None # unnecssary though
 
     def q_elbo_objective(self, regimes=None, **kwargs):
         """
@@ -283,12 +338,13 @@ class WZY(ABC):
             regimes = self.yw_regimes
         elbo = torch.tensor(0.0).to(self.device)
         for regime in regimes:
+            regime.label = self.ra.assign_label(regime.w_subsample)
             # get z samples from guide for approximation of expectation
             z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
             regime.z_subsample = z_sample
             elbo += (
                 self.yz.y_given_z_log_prob_regime(regime, **kwargs) + 
-                # self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
+                self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
                 z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
         return elbo
@@ -299,7 +355,7 @@ class WZY(ABC):
         p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ] = ELBO_q (y, w)
         """
         if regimes is None:
-            regimes = self.y_regimes
+            regimes = self.yw_regimes
         elbo = torch.tensor(0.0).to(self.device)
         for regime in regimes:
             w_sample, w_logprob = self.r_guide(regime.label).rsample_and_log_prob()
@@ -603,7 +659,7 @@ def simple_classifier_test():
         x = x.reshape(-1,1)
         dataset.append((x, y))
 
-    clsf = EncoderMLP(1, 10, 1)
+    clsf = EncoderMLP(1, 1, 1)
     clsf_optim = torch.optim.Adam(
         clsf.parameters(),
         lr=1e-3,
