@@ -288,7 +288,7 @@ class WZY(ABC):
             regime.z_subsample = z_sample
             elbo += (
                 self.yz.y_given_z_log_prob_regime(regime, **kwargs) + 
-                self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
+                # self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
                 z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
         return elbo
