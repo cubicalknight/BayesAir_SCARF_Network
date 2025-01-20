@@ -267,16 +267,11 @@ def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, fai
         # f[theta >= torch.pi] = 1.0
         # f = f.reshape(*f.shape,1).expand(*f.shape,2)
         f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
-
         offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1).reshape(-1,2)
         # offset = offset.reshape()
         # print(f'offset: {offset.shape}')
 
         z += f * offset
-
-        z = pyro.deterministic(
-            "z", z
-        )
 
         y = pyro.sample(
             "y",
@@ -290,7 +285,9 @@ def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, fai
     return y
 
 
-def two_moons_wzy_model(device, states, obs_none=False):
+def two_moons_wzy_model(device, states, **kwargs):
+
+    obs_none = kwargs.get("obs_none", False)
 
     # with pyro.plate("data", n):
     for day_ind in pyro.markov(range(len(states)), history=1):
@@ -347,6 +344,13 @@ def two_moons_wzy_model(device, states, obs_none=False):
             var_prefix + "z", z
         )
 
+        z_x = pyro.deterministic(
+            var_prefix + "z_x", z[0]
+        )
+        z_y = pyro.deterministic(
+            var_prefix + "z_y", z[1]
+        )
+
         y = pyro.sample(
             var_prefix + "y",
             dist.Normal(
@@ -379,13 +383,28 @@ def generate_two_moons_data_using_model(n, device, **kwargs):
         states=states,
         obs_none=True,
     )
-    y = [
-        model_trace.nodes[f'{day_ind}_y']['value']
+    states = [
+        model_trace.nodes[f'{day_ind}_y']['value'].detach()
         for day_ind in range(n)
     ]
-    y = torch.stack(y, axis=0).detach()
-    # print(y)
-    return y, w
+    y = torch.stack(states, axis=0)
+
+    z = [
+        model_trace.nodes[f'{day_ind}_z']['value'].detach()
+        for day_ind in range(n)
+    ]
+    z = torch.stack(z, axis=0)
+
+    return_states = kwargs.get("return_states", False)
+    return_z = kwargs.get("return_z", False)
+
+    ret = [y, w]
+    if return_states:
+        ret.append(states)
+    if return_z:
+        ret.append(z)
+
+    return tuple(ret)
 
 
 
