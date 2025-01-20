@@ -171,27 +171,7 @@ def run(
     y = sample_y_given_something(1, w_obs=w_obs)
     # plot_things(y, torch.ones(n_days), "sample test")
 
-    # with pyro.plate("samples", 1, dim=-2):
-    #     samples = w_z_y_model(w_obs=w_obs)
-    # print(samples)
-    # y = samples.reshape(-1,2).detach()
-    # print(y)
-    # plot_things(y, w_obs > .5)
-
     w_z_y_guide = AutoIAFNormal(w_z_y_model)
-
-    # TODO: figure out how to specify a custom loss
-    def simple_elbo(model, guide, *args, **kwargs):
-        # run the guide and trace its execution
-        guide_trace = pyro.poutine.trace(guide).get_trace(*args, **kwargs)
-        # run the model and replay it against the samples from the guide
-        model_trace = pyro.poutine.trace(
-            pyro.poutine.replay(model, trace=guide_trace)).get_trace(*args, **kwargs)
-        # construct the elbo loss function
-        return -1*(model_trace.log_prob_sum() - guide_trace.log_prob_sum())
-    
-    l = simple_elbo(w_z_y_model, w_z_y_guide, w_obs=w_obs, y_obs=y_obs)
-    # print(l)
 
     # Train the model
     # set up the optimizer
