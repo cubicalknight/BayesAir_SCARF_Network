@@ -366,13 +366,13 @@ def generate_two_moons_data_using_model(n, m, device, **kwargs):
     conditioning_dict = {}
     states = [None] * m
 
-    w_list = w.tolist()
+    w_list = [w[i] for i in range(len(w))]
     y_list = []
     states_list = []
     z_list = []
 
     for i in range(n):
-        conditioning_dict = {'w': w[i]}
+        conditioning_dict = {'w': w_list[i]}
 
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(two_moons_wzy_model, data=conditioning_dict)
@@ -391,6 +391,9 @@ def generate_two_moons_data_using_model(n, m, device, **kwargs):
 
         z = model_trace.nodes[f'z']['value'].detach()
         z_list.append(z)
+
+        # print(y.mean(axis=0), z_list[i])
+
 
     return_states = kwargs.get("return_states", False)
     return_z = kwargs.get("return_z", False)

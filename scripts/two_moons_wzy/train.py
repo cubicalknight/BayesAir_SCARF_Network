@@ -135,20 +135,20 @@ def run(
     torch.manual_seed(seed)
     pyro.set_rng_seed(seed)
 
-    def plot_things(samples, labels, title=None):
-        plt.figure(figsize=(4, 4))
-        plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
-        # Turn off axis ticks
-        plt.xticks([])
-        plt.yticks([])
-        plt.axis("off")
-        plt.ylim([-1.1, 1.1])
-        plt.xlim([-1.7, 1.7])
-        if title is not None:
-            plt.title(title)
-        # Equal aspect
-        plt.gca().set_aspect("equal")
-        plt.show()
+    # def plot_things(samples, labels, title=None):
+    #     plt.figure(figsize=(4, 4))
+    #     plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+    #     # Turn off axis ticks
+    #     plt.xticks([])
+    #     plt.yticks([])
+    #     plt.axis("off")
+    #     plt.ylim([-1.1, 1.1])
+    #     plt.xlim([-1.7, 1.7])
+    #     if title is not None:
+    #         plt.title(title)
+    #     # Equal aspect
+    #     plt.gca().set_aspect("equal")
+    #     plt.show()
 
     # def sample_y_given_something(k, w_obs=None, failure_obs=None, theta_obs=None):
     #     with pyro.plate("samples", k, dim=-2):
@@ -157,7 +157,23 @@ def run(
     #     y = samples.reshape(-1,2).detach().cpu()
     #     return y
 
-    n_days = 10
+    def plot_stuff(y_list, w_list):
+        plt.figure(figsize=(4, 4))
+        for y, w in zip(y_list, w_list):
+            c = 'r' if w > .5 else 'b'
+            samples = y
+            plt.scatter(*samples.T, s=1, c=c, cmap="bwr")
+        # Turn off axis ticks
+        plt.xticks([])
+        plt.yticks([])
+        plt.axis("off")
+        plt.ylim([-1.1, 1.1])
+        plt.xlim([-1.7, 1.7])
+        # Equal aspect
+        plt.gca().set_aspect("equal")
+        plt.show()
+
+    n_days = 100
     m_per_day = 10
 
     # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
@@ -175,11 +191,15 @@ def run(
             nominal_only=True, return_states=True, return_z=True
         )
     
+    # plot_stuff(y_list_failure, w_list_failure)
+    # plot_stuff(y_list_nominal, w_list_nominal)
+
     nominal_regimes = [
         RegimeData(
             label=torch.tensor([0.0], device=device), 
-            weight=torch.tensor(0.5, device=device),
+            weight=torch.tensor(0.5 / n_days, device=device),
             y_subsample=states_list_nominal[i],
+            z_subsample=z_list_nominal[i],
             w_subsample=w_list_nominal[i],
         )
         for i in range(n_days)
@@ -188,8 +208,9 @@ def run(
     failure_regimes = [
         RegimeData(
             label=torch.tensor([1.0], device=device), 
-            weight=torch.tensor(0.5, device=device),
+            weight=torch.tensor(0.5 / n_days, device=device),
             y_subsample=states_list_failure[i],
+            z_subsample=z_list_failure[i],
             w_subsample=w_list_failure[i],
         )
         for i in range(n_days)
@@ -215,14 +236,18 @@ def run(
     yz = PyroTwoMoonsYZ(wzy_model)
 
     print("\nfailure z in failure regime")
+    l = torch.tensor(0.0).to(device)
     for i in range(n_days):
         failure_regimes[i].z_subsample = z_list_failure[i]
-        print(yz.y_given_z_log_prob_regime(failure_regimes[i]))
+        l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
+    print(l)
 
     print("\nnominal z in failure regime")
+    l = torch.tensor(0.0).to(device)
     for i in range(n_days):
         failure_regimes[i].z_subsample = z_list_nominal[i]
-        print(yz.y_given_z_log_prob_regime(failure_regimes[i]))
+        l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
+    print(l)
 
 
 if __name__ == "__main__":
