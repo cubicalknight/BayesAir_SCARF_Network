@@ -135,20 +135,20 @@ def run(
     torch.manual_seed(seed)
     pyro.set_rng_seed(seed)
 
-    # def plot_things(samples, labels, title=None):
-    #     plt.figure(figsize=(4, 4))
-    #     plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
-    #     # Turn off axis ticks
-    #     plt.xticks([])
-    #     plt.yticks([])
-    #     plt.axis("off")
-    #     plt.ylim([-1.1, 1.1])
-    #     plt.xlim([-1.7, 1.7])
-    #     if title is not None:
-    #         plt.title(title)
-    #     # Equal aspect
-    #     plt.gca().set_aspect("equal")
-    #     plt.show()
+    def plot_things(samples, labels, title=None):
+        plt.figure(figsize=(4, 4))
+        plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+        # Turn off axis ticks
+        plt.xticks([])
+        plt.yticks([])
+        plt.axis("off")
+        plt.ylim([-1.1, 1.1])
+        plt.xlim([-1.7, 1.7])
+        if title is not None:
+            plt.title(title)
+        # Equal aspect
+        plt.gca().set_aspect("equal")
+        plt.show()
 
     # def sample_y_given_something(k, w_obs=None, failure_obs=None, theta_obs=None):
     #     with pyro.plate("samples", k, dim=-2):
@@ -226,6 +226,10 @@ def run(
         context=1,
         hidden_features=(64, 64),
     ).to(device)
+    q_guide = ConditionalGaussianMixture(
+        n_features=2,
+        n_context=1,
+    )
     # print(states)
     # label = torch.tensor([1.0], device=device)
     # print(q_guide(label).rsample_and_log_prob())
@@ -258,11 +262,62 @@ def run(
         ra=ra,
         q_guide=q_guide,
         r_guide=None,
-        w_subsample_list=w_list_failure+w_list_nominal,
-        y_subsample_list=y_list_failure+y_list_nominal,
+        w_subsample_list=w_list_failure,#+w_list_nominal,
+        y_subsample_list=y_list_failure,#+y_list_nominal,
     )
 
-    print(wzy.q_elbo_loss())
+    q_optimizer = torch.optim.Adam(
+        wzy.q_guide.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    q_scheduler = torch.optim.lr_scheduler.StepLR(
+        q_optimizer, step_size=lr_steps, gamma=lr_gamma
+    )
+
+    zw_optimizer = torch.optim.Adam(
+        wzy.zw.dist.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
+    zw_scheduler = torch.optim.lr_scheduler.StepLR(
+        zw_optimizer, step_size=lr_steps, gamma=lr_gamma
+    )
+
+    pbar = tqdm(range(100))
+    for i in pbar:
+        zw_optimizer.zero_grad()
+        loss = wzy.q_elbo_loss()
+        loss.backward()
+        zw_optimizer.step()
+        zw_scheduler.step()
+        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+
+    pbar = tqdm(range(100))
+    for i in pbar:
+        q_optimizer.zero_grad()
+        loss = wzy.q_elbo_loss()
+        loss.backward()
+        q_optimizer.step()
+        q_scheduler.step()
+        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+
+    label = torch.tensor([1.0], device=device)
+    samples = q_guide(label).sample((1000,))
+    plot_things(samples, 'r')
+
+    label = torch.tensor([0.0], device=device)
+    samples = q_guide(label).sample((1000,))
+    plot_things(samples, 'b')
+
+    label = torch.tensor([1.0], device=device)
+    samples = wzy.zw.dist(label).sample((1000,))
+    plot_things(samples, 'r')
+
+    label = torch.tensor([0.0], device=device)
+    samples = wzy.zw.dist(label).sample((1000,))
+    plot_things(samples, 'b')
+
 
 
 if __name__ == "__main__":
