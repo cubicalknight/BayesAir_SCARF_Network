@@ -121,13 +121,14 @@ class PyroModelYZ(YZ):
         return model_logprob
 
 
-def RegimeAssigner(ABC):
+
+class RegimeAssigner(ABC):
 
     @abstractmethod
-    def assign_mixture_label(self, y_subsample, w_subsample):
+    def assign_label(self, y_subsample, w_subsample):
         raise NotImplementedError
 
-    def build_regime(self, y_subsample, w_subsample, weight):
+    def make_regime(self, y_subsample, w_subsample, weight):
         label = self.assign_mixture_label(y_subsample, w_subsample)
         return RegimeData(
             label=label,
@@ -136,7 +137,7 @@ def RegimeAssigner(ABC):
             w_subsample=w_subsample
         )
     
-    def build_regimes(self, y_subsample_list, w_subsample_list, weight_list):
+    def make_regimes(self, y_subsample_list, w_subsample_list, weight_list):
         yww_list = zip(y_subsample_list, w_subsample_list, weight_list)
         regimes = []
         for y_subsample, w_subsample, weight in yww_list:
@@ -147,7 +148,7 @@ def RegimeAssigner(ABC):
             )
         return regimes
     
-    def build_regimes_per_point(self, y_samples, w_samples):
+    def make_regimes_per_point(self, y_samples, w_samples):
         weight_list = [
             torch.tensor(1.0 / len(y_samples)) 
             for _ in range(len(y_samples))
@@ -158,9 +159,20 @@ def RegimeAssigner(ABC):
         w_subsample_list = [
             ws for ws in w_samples
         ]
-        return self.build_regimes(y_samples, w_samples)
 
+        return self.build_regimes(
+            y_subsample_list, w_subsample_list, weight_list
+        )
+    
+    def make_regimes_no_subsample(self, y_samples, w_samples):
+        # TODO: device
+        weight_list = [torch.tensor(1.0)]
+        y_subsample_list = [y_samples]
+        w_subsample_list = [w_samples]
 
+        return self.build_regimes(
+            y_subsample_list, w_subsample_list, weight_list
+        )
 
 
 
@@ -199,6 +211,7 @@ class WZY(ABC):
     """
     zw: ZW
     yz: YZ
+    ra: RegimeAssigner
     
     # z_given_wy_guide = None # q guide
     # w_given_y_guide = None # r guide
@@ -253,11 +266,17 @@ class WZY(ABC):
         for r in self.regimes:
             w_sample, w_logprob = self.r_guide(r.label).rsample_and_log_prob()
             # build regime ???
-            regimes = [RegimeData()] # TODO: !!!
+            regimes = self.ra.make_regimes_no_subsample() # TODO:fix this. because need to weight down?
             # regimes should contain the y value and appropriate label corresponding to w ?
             elbo += (
-                self.q_elbo_objective(regimes)
+                self.q_elbo_objective(regimes) - w_logprob
             )
+        return elbo
+    
+    def r_elbo_loss(self, regimes=None):
+        return -self.r_elbo_objective()
+    
+
 
 
 
