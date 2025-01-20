@@ -175,55 +175,94 @@ def run(
         plt.gca().set_aspect("equal")
         plt.show()
 
-    n_days = 25
-    m_per_day = 40
-
-    # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
-    # y_obs, w_obs, states = generate_two_moons_data_using_model(n_days, device, return_states=True)
-    # plot_things(y_obs, w_obs > .5, "training data")
+    n_days = 50
+    m_per_day = 10
 
     y_list_failure, w_list_failure, states_list_failure, z_list_failure = \
         generate_two_moons_data_using_model(
             n_days, m_per_day, device, 
             failure_only=True, return_states=True, return_z=True, 
-            even_simpler=True,
+            # even_simpler=True,
         )
     y_list_nominal, w_list_nominal, states_list_nominal, z_list_nominal = \
         generate_two_moons_data_using_model(
             n_days, m_per_day, device, 
             nominal_only=True, return_states=True, return_z=True,
-            even_simpler=True,
+            # even_simpler=True,
         )
     
     plot_stuff(y_list_failure, w_list_failure)
     plot_stuff(y_list_nominal, w_list_nominal)
 
-    nominal_regimes = [
-        RegimeData(
-            label=torch.tensor([0.0], device=device), 
-            weight=torch.tensor(0.5 / n_days, device=device),
-            y_subsample=states_list_nominal[i],
-            z_subsample=z_list_nominal[i],
-            w_subsample=w_list_nominal[i],
-        )
-        for i in range(n_days)
-    ]
+    # n = 1000
+    # y_failure, w_failure, z_failure = \
+    #     generate_two_moons_data_using_model_plated(
+    #         n, device, 
+    #         failure_only=True, return_z=True, 
+    #         # even_simpler=True,
+    #     )
+    # y_nominal, w_nominal, z_nominal = \
+    #     generate_two_moons_data_using_model_plated(
+    #         n, device, 
+    #         nominal_only=True, return_z=True,
+    #         # even_simpler=True,
+    #     )
+    
+    # plot_things(y_failure, 'r')
+    # plot_things(y_nominal, 'b')
+    
+    # nominal_regimes = [
+    #     RegimeData(
+    #         label=torch.tensor([0.0], device=device), 
+    #         weight=torch.tensor(0.5 / n_days, device=device),
+    #         y_subsample=states_list_nominal[i],
+    #         z_subsample=z_list_nominal[i],
+    #         w_subsample=w_list_nominal[i],
+    #     )
+    #     for i in range(n_days)
+    # ]
 
-    failure_regimes = [
-        RegimeData(
-            label=torch.tensor([1.0], device=device), 
-            weight=torch.tensor(0.5 / n_days, device=device),
-            y_subsample=states_list_failure[i],
-            z_subsample=z_list_failure[i],
-            w_subsample=w_list_failure[i],
-        )
-        for i in range(n_days)
-    ]
+    # failure_regimes = [
+    #     RegimeData(
+    #         label=torch.tensor([1.0], device=device), 
+    #         weight=torch.tensor(0.5 / n_days, device=device),
+    #         y_subsample=states_list_failure[i],
+    #         z_subsample=z_list_failure[i],
+    #         w_subsample=w_list_failure[i],
+    #     )
+    #     for i in range(n_days)
+    # ]
+
+    # nominal_regime = RegimeData(
+    #     label=torch.tensor([0.0], device=device), 
+    #     weight=torch.tensor(0.5 / n, device=device),
+    #     y_subsample=y_nominal,
+    #     z_subsample=z_nominal,
+    #     w_subsample=w_nominal,
+    # )
+
+    # failure_regime = RegimeData(
+    #     label=torch.tensor([1.0], device=device), 
+    #     weight=torch.tensor(0.5 / n, device=device),
+    #     y_subsample=y_failure,
+    #     z_subsample=z_failure,
+    #     w_subsample=w_failure,
+    # )
 
     wzy_model = functools.partial(
         two_moons_wzy_model,
         device=device,
     )
+    # wzy_model = functools.partial(
+    #     two_moons_wzy_model_even_simpler,
+    #     device=device,
+    # )
+
+    # wzy_model = functools.partial(
+    #     two_moons_wzy_model_plated,
+    #     n=n,
+    #     device=device,
+    # )
 
     q_guide = zuko.flows.NSF(
         features=2,
@@ -259,8 +298,19 @@ def run(
     # print(l)
 
     ra = ThresholdTwoMoonsRA(device)
-    # ra = MLPTwoMoonsRA(1, 2, 1).to(device)
+    # ra = MLPTwoMoonsRA(1, 4, 1).to(device)
+    # zw = NSFTwoMoonsZW(device)
     zw = GaussianMixtureTwoMoonsZW(device)
+    zw.dist.means = torch.nn.Parameter(
+        torch.tensor(
+            [[-1.0, -1.0], [1.0, 1.0]], device=device
+        )
+    )
+    zw.dist.log_vars = torch.nn.Parameter(
+        torch.tensor(
+            [[-1.0, -1.0], [-1.0, -1.0]], device=device
+        )
+    )
 
     wzy = WZY(
         zw=zw,
@@ -269,8 +319,19 @@ def run(
         q_guide=q_guide,
         r_guide=None,
         w_subsample_list=w_list_failure+w_list_nominal,
-        y_subsample_list=y_list_failure+y_list_nominal,
+        y_subsample_list=states_list_failure+states_list_nominal,
+        # w_subsample_list=[w_failure, w_nominal],
+        # y_subsample_list=[y_failure, y_nominal],
     )
+
+    # label = torch.tensor([1.0], device=device)
+    # samples = wzy.zw.dist(label).sample((1000,))
+    # plot_things(samples, 'r')
+
+    # label = torch.tensor([0.0], device=device)
+    # samples = wzy.zw.dist(label).sample((1000,))
+    # plot_things(samples, 'b')
+
 
     # print(wzy.yw_regimes)
 
@@ -283,14 +344,6 @@ def run(
         q_optimizer, step_size=lr_steps, gamma=lr_gamma
     )
 
-    zw_optimizer = torch.optim.Adam(
-        wzy.zw.dist.parameters(),
-        lr=lr,
-        weight_decay=weight_decay,
-    )
-    zw_scheduler = torch.optim.lr_scheduler.StepLR(
-        zw_optimizer, step_size=lr_steps, gamma=lr_gamma
-    )
 
     ra_optimizer = torch.optim.Adam(
         wzy.ra.parameters(),
@@ -302,9 +355,8 @@ def run(
     )
 
     losses = []
-    pbar = tqdm(range(2000))
+    pbar = tqdm(range(20))
     for i in pbar:
-        zw_optimizer.zero_grad()
         q_optimizer.zero_grad()
         ra_optimizer.zero_grad()
 
@@ -312,75 +364,62 @@ def run(
         loss.backward()
         losses.append(loss.detach())
 
-        zw_optimizer.step()
-        zw_scheduler.step()
-
         q_optimizer.step()
         q_scheduler.step()
 
         ra_optimizer.step()
         ra_scheduler.step()
 
-        pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
+        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+        # pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
 
     plt.figure()
     plt.plot(losses)
     plt.show()
 
-    # losses = []
-    # pbar = tqdm(range(1000))
-    # for i in pbar:
+    # for _ in tqdm(range(10)):
 
-    #     ra_optimizer.zero_grad()
+    #     losses = []
+    #     pbar = tqdm(range(100))
+    #     for i in pbar:
+    #         q_optimizer.zero_grad()
 
-    #     loss = wzy.q_elbo_loss()
-    #     loss.backward()
-    #     losses.append(loss.detach())
+    #         loss = wzy.q_elbo_loss()
+    #         loss.backward()
+    #         losses.append(loss.detach())
 
-    #     ra_optimizer.step()
-    #     ra_scheduler.step()
+    #         q_optimizer.step()
+    #         q_scheduler.step()
 
-    #     pbar.set_description(f'w threshold: {wzy.ra.threshold.item()}')
+    #         pbar.set_description(f'q_elbo_loss: {loss:.3f}')
 
-    # plt.figure()
-    # plt.plot(losses)
-    # plt.show()
+    #     # plt.figure()
+    #     # plt.plot(losses)
+    #     # plt.show()
 
-    # losses = []
-    # pbar = tqdm(range(100))
-    # for i in pbar:
-    #     q_optimizer.zero_grad()
+    #     losses = []
+    #     pbar = tqdm(range(100))
+    #     for i in pbar:
 
-    #     loss = wzy.q_elbo_loss()
-    #     loss.backward()
-    #     losses.append(loss.detach())
+    #         # ra_optimizer.zero_grad()
+    #         zw_optimizer.zero_grad()
 
-    #     q_optimizer.step()
-    #     q_scheduler.step()
+    #         loss = wzy.q_elbo_loss()
+    #         loss.backward()
+    #         losses.append(loss.detach())
 
-    #     pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+    #         # ra_optimizer.step()
+    #         # ra_scheduler.step()
 
-    # plt.figure()
-    # plt.plot(losses)
-    # plt.show()
+    #         zw_optimizer.step()
+    #         zw_scheduler.step()
 
-    # losses = []
-    # pbar = tqdm(range(1000))
-    # for i in pbar:
-    #     zw_optimizer.zero_grad()
+    #         pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
 
-    #     loss = wzy.q_elbo_loss()
-    #     loss.backward()
-    #     losses.append(loss.detach())
+    #     # plt.figure()
+    #     # plt.plot(losses)
+    #     # plt.show()
 
-    #     zw_optimizer.step()
-    #     zw_scheduler.step()
-
-    #     pbar.set_description(f'q_elbo_loss: {loss:.3f}')
-
-    # plt.figure()
-    # plt.plot(losses)
-    # plt.show()
 
     label = torch.tensor([1.0], device=device)
     samples = q_guide(label).sample((1000,))
@@ -388,14 +427,6 @@ def run(
 
     label = torch.tensor([0.0], device=device)
     samples = q_guide(label).sample((1000,))
-    plot_things(samples, 'b')
-
-    label = torch.tensor([1.0], device=device)
-    samples = wzy.zw.dist(label).sample((1000,))
-    plot_things(samples, 'r')
-
-    label = torch.tensor([0.0], device=device)
-    samples = wzy.zw.dist(label).sample((1000,))
     plot_things(samples, 'b')
 
     x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
@@ -403,7 +434,7 @@ def run(
     # x = x.reshape(-1, 1)
     for i in range(len(x)):
         print(f'{x[i].item():.3f} -> {wzy.ra.assign_label(x[i]).item():.3f}')
-    print(f'ra threshold = {wzy.ra.threshold}')
+    # print(f'ra threshold = {wzy.ra.threshold}')
 
 
 

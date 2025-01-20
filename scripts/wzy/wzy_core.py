@@ -135,9 +135,11 @@ class PyroTwoMoonsYZ(PyroStatesModelYZ):
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
             states=regime.y_subsample # here y_subsample should have states?
+            # y_obs=regime.y_subsample
         )
 
-        model_logprob = model_trace.log_prob_sum()
+        # model_logprob = model_trace.log_prob_sum()
+        model_logprob = model_trace.log_prob_sum() #/ len(regime.w_subsample)
         return model_logprob
 
 
@@ -215,14 +217,14 @@ class ThresholdTwoMoonsRA(RegimeAssigner, nn.Module):
         nn.Module.__init__(self)
         self.device = device
         self.threshold = nn.Parameter(
-            torch.tensor([0.3]).to(device),
+            torch.tensor([0.5]).to(device),
             requires_grad=True
         )
         self.a = torch.tensor(100.0).to(device)
 
     def assign_label(self, w_subsample):
         return nn.functional.sigmoid(
-            self.a * (w_subsample - self.threshold)
+            self.a * (w_subsample.mean() - self.threshold)
         )
         
 
@@ -342,9 +344,10 @@ class WZY(ABC):
             # get z samples from guide for approximation of expectation
             z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
             regime.z_subsample = z_sample
+            # n = len(regime.w_subsample)
             elbo += (
                 self.yz.y_given_z_log_prob_regime(regime, **kwargs) + 
-                self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
+                # self.zw.z_given_w_log_prob_regime(regime, **kwargs) - 
                 z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
         return elbo

@@ -408,6 +408,79 @@ def two_moons_wzy_model_even_simpler(device, states, **kwargs):
 
     return y
 
+
+def two_moons_wzy_model_plated(n, device, w_obs=None, y_obs=None):
+
+    with pyro.plate("data", n):
+         
+        if w_obs is not None:
+            w = pyro.deterministic(
+                "w", 
+                w_obs
+            )
+        else:
+            w = pyro.sample(
+                "w",
+                dist.Beta(
+                    torch.tensor(1.0, device=device),
+                    torch.tensor(1.0, device=device)
+                )
+            )
+        
+        w_s = torch.zeros(w.shape, device=device)
+        w_s[w >  .5] = 1.0
+        w_s[w <= .5] = 0.0
+
+        failure = pyro.sample(
+            "failure",
+            dist.RelaxedBernoulliStraightThrough(
+                temperature=torch.tensor(0.01, device=device),
+                probs=w_s,
+            ),
+        )
+
+        loc = failure * torch.pi
+
+        theta = pyro.sample(
+            "theta",
+            dist.Beta(
+                torch.tensor(1.0, device=device),
+                torch.tensor(1.0, device=device)
+            ),
+        )
+
+        theta = theta * torch.pi + loc
+
+        z_x = (torch.cos(theta) - 1/2)
+        z_y = (torch.sin(theta) - 1/4)
+
+        z = torch.stack(
+            (
+                z_x, z_y,
+            ),
+            axis=-1,
+        )
+
+        f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
+        offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1).reshape(-1,2)
+
+        z += f * offset
+
+        pyro.deterministic("z", z)
+
+        y = pyro.sample(
+            "y",
+            dist.Normal(
+                z,
+                torch.tensor([0.1, 0.1]).to(device),
+            ).to_event(1),
+            obs=y_obs,
+        )
+
+    return y
+
+
+
 def generate_two_moons_data_using_model(n, m, device, **kwargs):
 
     w = torch.rand(n).to(device)
@@ -461,6 +534,40 @@ def generate_two_moons_data_using_model(n, m, device, **kwargs):
         ret.append(states_list)
     if return_z:
         ret.append(z_list)
+
+    return tuple(ret)
+
+
+def generate_two_moons_data_using_model_plated(n, device, **kwargs):
+
+    w = torch.rand(n).to(device)
+    if kwargs.get("failure_only", False):
+        w = 0.5 + 0.5 * w
+    elif kwargs.get("nominal_only", False):
+        w = 0.5 * w
+        
+    # if kwargs.get("even_simpler", False):
+    #     model = two_moons_wzy_model_even_simpler
+    # else:
+    #     model = two_moons_wzy_model
+    model = two_moons_wzy_model_plated
+
+    conditioning_dict = {'w': w}
+
+    model_trace = pyro.poutine.trace(
+        pyro.poutine.condition(model, data=conditioning_dict)
+    ).get_trace(
+        n=n,
+        device=device,
+    )
+    y = model_trace.nodes['y']['value'].detach()
+    z = model_trace.nodes['z']['value'].detach()
+
+    return_z = kwargs.get("return_z", False)
+
+    ret = [y, w]
+    if return_z:
+        ret.append(z)
 
     return tuple(ret)
 
