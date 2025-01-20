@@ -289,67 +289,60 @@ def two_moons_wzy_model(device, states, **kwargs):
 
     obs_none = kwargs.get("obs_none", False)
 
+    w = pyro.sample(
+        "w",
+        dist.Beta(
+            torch.tensor(1.0, device=device),
+            torch.tensor(1.0, device=device)
+        )
+    )
+    
+    # print(w)
+    w_s = torch.zeros(w.shape, device=device)
+    w_s[w >  .5] = 1.0
+    w_s[w <= .5] = 0.0
+
+    failure = pyro.sample(
+        "failure",
+        dist.RelaxedBernoulliStraightThrough(
+            temperature=torch.tensor(0.1, device=device),
+            probs=w_s,
+        ),
+    )
+
+    loc = failure * torch.pi
+
+    theta = pyro.sample(
+        "base_theta",
+        dist.Beta(
+            torch.tensor(1.0, device=device),
+            torch.tensor(1.0, device=device)
+        ),
+    )
+
+    theta = theta * torch.pi + loc
+
+    z_x = (torch.cos(theta) - 1/2)
+    z_y = (torch.sin(theta) - 1/4)
+
+    z = torch.stack(
+        (z_x, z_y), axis=-1
+    )
+
+    f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
+    offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1)#.reshape(-1,2)
+
+    # print(f, offset)
+
+    z += f * offset
+
+    z = pyro.deterministic(
+        "z", z
+    )
+
     # with pyro.plate("data", n):
     for day_ind in pyro.markov(range(len(states)), history=1):
         var_prefix = f'{day_ind}_'
-         
-        w = pyro.sample(
-            var_prefix + "w",
-            dist.Beta(
-                torch.tensor(1.0, device=device),
-                torch.tensor(1.0, device=device)
-            )
-        )
-        
-        # print(w)
-        w_s = torch.zeros(w.shape, device=device)
-        w_s[w >  .5] = 1.0
-        w_s[w <= .5] = 0.0
-
-        failure = pyro.sample(
-            var_prefix + "failure",
-            dist.RelaxedBernoulliStraightThrough(
-                temperature=torch.tensor(0.1, device=device),
-                probs=w_s,
-            ),
-        )
-
-        loc = failure * torch.pi
-
-        theta = pyro.sample(
-            var_prefix + "base_theta",
-            dist.Beta(
-                torch.tensor(1.0, device=device),
-                torch.tensor(1.0, device=device)
-            ),
-        )
-
-        theta = theta * torch.pi + loc
-
-        z_x = (torch.cos(theta) - 1/2)
-        z_y = (torch.sin(theta) - 1/4)
-
-        z = torch.stack(
-            (z_x, z_y), axis=-1
-        )
-
-        f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
-        offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1)#.reshape(-1,2)
-
-        # print(f, offset)
-
-        z += f * offset
-
-        z = pyro.deterministic(
-            var_prefix + "z", z
-        )
-
-        z_x = pyro.deterministic(
-            var_prefix + "z_x", z[0]
-        )
-        z_y = pyro.deterministic(
-            var_prefix + "z_y", z[1]
-        )
 
         y = pyro.sample(
             var_prefix + "y",
@@ -362,7 +355,7 @@ def two_moons_wzy_model(device, states, **kwargs):
 
     return y
 
-def generate_two_moons_data_using_model(n, device, **kwargs):
+def generate_two_moons_data_using_model(n, m, device, **kwargs):
 
     w = torch.rand(n).to(device)
     if kwargs.get("failure_only", False):
@@ -371,38 +364,42 @@ def generate_two_moons_data_using_model(n, device, **kwargs):
         w = 0.5 * w
         
     conditioning_dict = {}
-    states = [None] * n
-    for day_ind in range(n):
-        conditioning_dict[f'{day_ind}_w'] = w[day_ind]
-    # model = two_moons_wzy_model(device, states, obs_none=True)
-    # print(conditioning_dict)
-    model_trace = pyro.poutine.trace(
-        pyro.poutine.condition(two_moons_wzy_model, data=conditioning_dict)
-    ).get_trace(
-        device=device,
-        states=states,
-        obs_none=True,
-    )
-    states = [
-        model_trace.nodes[f'{day_ind}_y']['value'].detach()
-        for day_ind in range(n)
-    ]
-    y = torch.stack(states, axis=0)
+    states = [None] * m
 
-    z = [
-        model_trace.nodes[f'{day_ind}_z']['value'].detach()
-        for day_ind in range(n)
-    ]
-    z = torch.stack(z, axis=0)
+    w_list = w.tolist()
+    y_list = []
+    states_list = []
+    z_list = []
+
+    for i in range(n):
+        conditioning_dict = {'w': w[i]}
+
+        model_trace = pyro.poutine.trace(
+            pyro.poutine.condition(two_moons_wzy_model, data=conditioning_dict)
+        ).get_trace(
+            device=device,
+            states=states,
+            obs_none=True,
+        )
+        states = [
+            model_trace.nodes[f'{day_ind}_y']['value'].detach()
+            for day_ind in range(m)
+        ]
+        states_list.append(states)
+        y = torch.stack(states, axis=0)
+        y_list.append(y)
+
+        z = model_trace.nodes[f'z']['value'].detach()
+        z_list.append(z)
 
     return_states = kwargs.get("return_states", False)
     return_z = kwargs.get("return_z", False)
 
-    ret = [y, w]
+    ret = [y_list, w_list]
     if return_states:
-        ret.append(states)
+        ret.append(states_list)
     if return_z:
-        ret.append(z)
+        ret.append(z_list)
 
     return tuple(ret)
 
@@ -415,15 +412,15 @@ def test():
 
     # y, w = generate_two_moons_data_hierarchical(1000, device)
 
-    # y, w = generate_two_moons_data_using_model(1000, device)
-    y, w = generate_two_moons_data_using_model(1000, device, failure_only=True)
-    # y, w = generate_two_moons_data_using_model(1000, device, nominal_only=True)
-    
-    labels = (w > .5)
-    samples = y
+    y_list, w_list = generate_two_moons_data_using_model(100, 10, device)
+    # y_list, w_list = generate_two_moons_data_using_model(100, 10, device, failure_only=True)
+    # y_list, w_list = generate_two_moons_data_using_model(100, 10, device, nominal_only=True)
 
     plt.figure(figsize=(4, 4))
-    plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
+    for y, w in zip(y_list, w_list):
+        c = 'r' if w > .5 else 'b'
+        samples = y
+        plt.scatter(*samples.T, s=1, c=c, cmap="bwr")
     # Turn off axis ticks
     plt.xticks([])
     plt.yticks([])

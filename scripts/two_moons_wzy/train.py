@@ -157,36 +157,43 @@ def run(
     #     y = samples.reshape(-1,2).detach().cpu()
     #     return y
 
-    n_days = 500
+    n_days = 10
+    m_per_day = 10
 
     # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
     # y_obs, w_obs, states = generate_two_moons_data_using_model(n_days, device, return_states=True)
     # plot_things(y_obs, w_obs > .5, "training data")
 
-    y_failure, w_failure, states_failure, z_failure = \
+    y_list_failure, w_list_failure, states_list_failure, z_list_failure = \
         generate_two_moons_data_using_model(
-            n_days, device, 
+            n_days, m_per_day, device, 
             failure_only=True, return_states=True, return_z=True
         )
-    y_nominal, w_nominal, states_nominal, z_nominal = \
+    y_list_nominal, w_list_nominal, states_list_nominal, z_list_nominal = \
         generate_two_moons_data_using_model(
-            n_days, device, 
+            n_days, m_per_day, device, 
             nominal_only=True, return_states=True, return_z=True
         )
     
-    nominal_regime = regime = RegimeData(
-        label=torch.tensor([0.0], device=device), 
-        weight=torch.tensor(0.5, device=device),
-        y_subsample=states_nominal,
-        w_subsample=w_nominal,
-    )
+    nominal_regimes = [
+        RegimeData(
+            label=torch.tensor([0.0], device=device), 
+            weight=torch.tensor(0.5, device=device),
+            y_subsample=states_list_nominal[i],
+            w_subsample=w_list_nominal[i],
+        )
+        for i in range(n_days)
+    ]
 
-    failure_regime = regime = RegimeData(
-        label=torch.tensor([1.0], device=device), 
-        weight=torch.tensor(0.5, device=device),
-        y_subsample=states_failure,
-        w_subsample=w_failure,
-    )
+    failure_regimes = [
+        RegimeData(
+            label=torch.tensor([1.0], device=device), 
+            weight=torch.tensor(0.5, device=device),
+            y_subsample=states_list_failure[i],
+            w_subsample=w_list_failure[i],
+        )
+        for i in range(n_days)
+    ]
 
     wzy_model = functools.partial(
         two_moons_wzy_model,
@@ -207,11 +214,15 @@ def run(
 
     yz = PyroTwoMoonsYZ(wzy_model)
 
-    failure_regime.z_subsample = z_failure
-    print(yz.y_given_z_log_prob_regime(failure_regime))
+    print("\nfailure z in failure regime")
+    for i in range(n_days):
+        failure_regimes[i].z_subsample = z_list_failure[i]
+        print(yz.y_given_z_log_prob_regime(failure_regimes[i]))
 
-    failure_regime.z_subsample = z_nominal
-    print(yz.y_given_z_log_prob_regime(failure_regime))
+    print("\nnominal z in failure regime")
+    for i in range(n_days):
+        failure_regimes[i].z_subsample = z_list_nominal[i]
+        print(yz.y_given_z_log_prob_regime(failure_regimes[i]))
 
 
 if __name__ == "__main__":
