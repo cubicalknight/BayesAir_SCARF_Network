@@ -175,8 +175,8 @@ def run(
         plt.gca().set_aspect("equal")
         plt.show()
 
-    n_days = 50
-    m_per_day = 20
+    n_days = 25
+    m_per_day = 40
 
     # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
     # y_obs, w_obs, states = generate_two_moons_data_using_model(n_days, device, return_states=True)
