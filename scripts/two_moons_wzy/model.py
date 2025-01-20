@@ -178,7 +178,6 @@ def two_moons_z_y_model(n, device, obs=None):
     return y
 
 
-
 def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, failure_obs=None):
 
     with pyro.plate("data", n):
