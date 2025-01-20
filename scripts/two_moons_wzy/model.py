@@ -290,14 +290,116 @@ def two_moons_w_z_y_model(n, device, w_obs=None, y_obs=None, theta_obs=None, fai
     return y
 
 
+def two_moons_wzy_model(device, states, obs_none=False):
 
-if __name__ == "__main__":
+    # with pyro.plate("data", n):
+    for day_ind in pyro.markov(range(len(states)), history=1):
+        var_prefix = f'{day_ind}_'
+         
+        w = pyro.sample(
+            var_prefix + "w",
+            dist.Beta(
+                torch.tensor(1.0, device=device),
+                torch.tensor(1.0, device=device)
+            )
+        )
+        
+        # print(w)
+        w_s = torch.zeros(w.shape, device=device)
+        w_s[w >  .5] = 1.0
+        w_s[w <= .5] = 0.0
+
+        failure = pyro.sample(
+            var_prefix + "failure",
+            dist.RelaxedBernoulliStraightThrough(
+                temperature=torch.tensor(0.1, device=device),
+                probs=w_s,
+            ),
+        )
+
+        loc = failure * torch.pi
+
+        theta = pyro.sample(
+            var_prefix + "base_theta",
+            dist.Beta(
+                torch.tensor(1.0, device=device),
+                torch.tensor(1.0, device=device)
+            ),
+        )
+
+        theta = theta * torch.pi + loc
+
+        z_x = (torch.cos(theta) - 1/2)
+        z_y = (torch.sin(theta) - 1/4)
+
+        z = torch.stack(
+            (z_x, z_y), axis=-1
+        )
+
+        f = failure.reshape(*failure.shape,1).expand(*failure.shape,2)
+        offset = pyro.param("offset", torch.tensor([1.0, 0.5], device=device), event_dim=1)#.reshape(-1,2)
+
+        # print(f, offset)
+
+        z += f * offset
+
+        z = pyro.deterministic(
+            var_prefix + "z", z
+        )
+
+        y = pyro.sample(
+            var_prefix + "y",
+            dist.Normal(
+                z,
+                torch.tensor([0.1, 0.1]).to(device),
+            ).to_event(1),
+            obs=states[day_ind] if not obs_none else None,
+        )
+
+    return y
+
+def generate_two_moons_data_using_model(n, device, **kwargs):
+
+    w = torch.rand(n).to(device)
+    if kwargs.get("failure_only", False):
+        w = 0.5 + 0.5 * w
+    elif kwargs.get("nominal_only", False):
+        w = 0.5 * w
+        
+    conditioning_dict = {}
+    states = [None] * n
+    for day_ind in range(n):
+        conditioning_dict[f'{day_ind}_w'] = w[day_ind]
+    # model = two_moons_wzy_model(device, states, obs_none=True)
+    # print(conditioning_dict)
+    model_trace = pyro.poutine.trace(
+        pyro.poutine.condition(two_moons_wzy_model, data=conditioning_dict)
+    ).get_trace(
+        device=device,
+        states=states,
+        obs_none=True,
+    )
+    y = [
+        model_trace.nodes[f'{day_ind}_y']['value']
+        for day_ind in range(n)
+    ]
+    y = torch.stack(y, axis=0).detach()
+    # print(y)
+    return y, w
+
+
+
+def test():
     import matplotlib.pyplot as plt
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    y, w = generate_two_moons_data_hierarchical(1000, device)
-     
+    # y, w = generate_two_moons_data_hierarchical(1000, device)
+
+    # y, w = generate_two_moons_data_using_model(1000, device)
+    y, w = generate_two_moons_data_using_model(1000, device, failure_only=True)
+    # y, w = generate_two_moons_data_using_model(1000, device, nominal_only=True)
+    
     labels = (w > .5)
     samples = y
 
@@ -312,3 +414,6 @@ if __name__ == "__main__":
     # Equal aspect
     plt.gca().set_aspect("equal")
     plt.show()
+
+if __name__ == "__main__":
+    test()
