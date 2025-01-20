@@ -135,15 +135,16 @@ def run(
     torch.manual_seed(seed)
     pyro.set_rng_seed(seed)
 
-    def plot_things(samples, labels, title=None):
+    def plot_things(samples, labels, title=None, no_axlim=False):
         plt.figure(figsize=(4, 4))
         plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
         # # Turn off axis ticks
         # plt.xticks([])
         # plt.yticks([])
         # plt.axis("off")
-        plt.ylim([-2.0, 2.0])
-        plt.xlim([-2.0, 2.0])
+        if not no_axlim:
+            plt.ylim([-2.0, 2.0])
+            plt.xlim([-2.0, 2.0])
         if title is not None:
             plt.title(title)
         # Equal aspect
@@ -175,38 +176,50 @@ def run(
         plt.gca().set_aspect("equal")
         plt.show()
 
-    n_days = 50
+    n_days = 100
     m_per_day = 10
 
-    y_list_failure, w_list_failure, states_list_failure, z_list_failure = \
-        generate_two_moons_data_using_model(
-            n_days, m_per_day, device, 
-            failure_only=True, return_states=True, return_z=True, 
-            # even_simpler=True,
-        )
-    y_list_nominal, w_list_nominal, states_list_nominal, z_list_nominal = \
-        generate_two_moons_data_using_model(
-            n_days, m_per_day, device, 
-            nominal_only=True, return_states=True, return_z=True,
-            # even_simpler=True,
-        )
+    # y_list_failure, w_list_failure, states_list_failure, z_list_failure = \
+    #     generate_two_moons_data_using_model(
+    #         n_days, m_per_day, device, 
+    #         failure_only=True, return_states=True, return_z=True, 
+    #         # even_simpler=True,
+    #     )
+    # y_list_nominal, w_list_nominal, states_list_nominal, z_list_nominal = \
+    #     generate_two_moons_data_using_model(
+    #         n_days, m_per_day, device, 
+    #         nominal_only=True, return_states=True, return_z=True,
+    #         # even_simpler=True,
+    #     )
     
-    plot_stuff(y_list_failure, w_list_failure)
-    plot_stuff(y_list_nominal, w_list_nominal)
+    # plot_stuff(y_list_failure, w_list_failure)
+    # plot_stuff(y_list_nominal, w_list_nominal)
 
-    # n = 1000
-    # y_failure, w_failure, z_failure = \
-    #     generate_two_moons_data_using_model_plated(
-    #         n, device, 
-    #         failure_only=True, return_z=True, 
-    #         # even_simpler=True,
-    #     )
-    # y_nominal, w_nominal, z_nominal = \
-    #     generate_two_moons_data_using_model_plated(
-    #         n, device, 
-    #         nominal_only=True, return_z=True,
-    #         # even_simpler=True,
-    #     )
+    n = 1000
+    m = 1
+    y_failure_list, w_failure_list, z_failure_list = [], [], []
+    for _ in range(m):
+        y_failure, w_failure, z_failure = \
+            generate_two_moons_data_using_model_plated(
+                n, device, 
+                failure_only=True, return_z=True, 
+                # even_simpler=True,
+            )
+        y_failure_list.append(y_failure)
+        w_failure_list.append(w_failure)
+        z_failure_list.append(z_failure)
+
+    y_nominal_list, w_nominal_list, z_nominal_list = [], [], []
+    for _ in range(m):
+        y_nominal, w_nominal, z_nominal = \
+            generate_two_moons_data_using_model_plated(
+                n, device, 
+                nominal_only=True, return_z=True,
+                # even_simpler=True,
+            )
+        y_nominal_list.append(y_nominal)
+        w_nominal_list.append(w_nominal)
+        z_nominal_list.append(z_nominal)
     
     # plot_things(y_failure, 'r')
     # plot_things(y_nominal, 'b')
@@ -249,20 +262,20 @@ def run(
     #     w_subsample=w_failure,
     # )
 
-    wzy_model = functools.partial(
-        two_moons_wzy_model,
-        device=device,
-    )
+    # wzy_model = functools.partial(
+    #     two_moons_wzy_model,
+    #     device=device,
+    # )
     # wzy_model = functools.partial(
     #     two_moons_wzy_model_even_simpler,
     #     device=device,
     # )
 
-    # wzy_model = functools.partial(
-    #     two_moons_wzy_model_plated,
-    #     n=n,
-    #     device=device,
-    # )
+    wzy_model = functools.partial(
+        two_moons_wzy_model_plated,
+        n=n,
+        device=device,
+    )
 
     q_guide = zuko.flows.NSF(
         features=2,
@@ -318,10 +331,10 @@ def run(
         ra=ra,
         q_guide=q_guide,
         r_guide=None,
-        w_subsample_list=w_list_failure+w_list_nominal,
-        y_subsample_list=states_list_failure+states_list_nominal,
-        # w_subsample_list=[w_failure, w_nominal],
-        # y_subsample_list=[y_failure, y_nominal],
+        # w_subsample_list=w_list_failure+w_list_nominal,
+        # y_subsample_list=states_list_failure+states_list_nominal,
+        w_subsample_list=w_failure_list+w_nominal_list,
+        y_subsample_list=y_failure_list+y_nominal_list,
     )
 
     # label = torch.tensor([1.0], device=device)
@@ -355,10 +368,10 @@ def run(
     )
 
     losses = []
-    pbar = tqdm(range(20))
+    pbar = tqdm(range(500))
     for i in pbar:
         q_optimizer.zero_grad()
-        ra_optimizer.zero_grad()
+        # ra_optimizer.zero_grad()
 
         loss = wzy.q_elbo_loss()
         loss.backward()
@@ -367,8 +380,8 @@ def run(
         q_optimizer.step()
         q_scheduler.step()
 
-        ra_optimizer.step()
-        ra_scheduler.step()
+        # ra_optimizer.step()
+        # ra_scheduler.step()
 
         pbar.set_description(f'q_elbo_loss: {loss:.3f}')
         # pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
@@ -377,57 +390,15 @@ def run(
     plt.plot(losses)
     plt.show()
 
-    # for _ in tqdm(range(10)):
-
-    #     losses = []
-    #     pbar = tqdm(range(100))
-    #     for i in pbar:
-    #         q_optimizer.zero_grad()
-
-    #         loss = wzy.q_elbo_loss()
-    #         loss.backward()
-    #         losses.append(loss.detach())
-
-    #         q_optimizer.step()
-    #         q_scheduler.step()
-
-    #         pbar.set_description(f'q_elbo_loss: {loss:.3f}')
-
-    #     # plt.figure()
-    #     # plt.plot(losses)
-    #     # plt.show()
-
-    #     losses = []
-    #     pbar = tqdm(range(100))
-    #     for i in pbar:
-
-    #         # ra_optimizer.zero_grad()
-    #         zw_optimizer.zero_grad()
-
-    #         loss = wzy.q_elbo_loss()
-    #         loss.backward()
-    #         losses.append(loss.detach())
-
-    #         # ra_optimizer.step()
-    #         # ra_scheduler.step()
-
-    #         zw_optimizer.step()
-    #         zw_scheduler.step()
-
-    #         pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
-
-    #     # plt.figure()
-    #     # plt.plot(losses)
-    #     # plt.show()
-
 
     label = torch.tensor([1.0], device=device)
     samples = q_guide(label).sample((1000,))
-    plot_things(samples, 'r')
+    print(samples)
+    plot_things(samples, 'r', no_axlim=True)
 
     label = torch.tensor([0.0], device=device)
     samples = q_guide(label).sample((1000,))
-    plot_things(samples, 'b')
+    plot_things(samples, 'b', no_axlim=True)
 
     x = torch.tensor([1,2,3,4,5,6,7,8,9,10], dtype=torch.float32) / 10.0
     # y = torch.tensor([0,0,0,0,0,1,1,1,1,1], dtype=torch.long)
