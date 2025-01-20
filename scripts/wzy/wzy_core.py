@@ -113,10 +113,7 @@ class PyroTwoMoonsYZ(PyroStatesModelYZ):
             sample = sample.unsqueeze(0)
         assert sample.shape[-1] == 2
 
-        conditioning_dict = {
-            f'{day_ind}_z': sample[day_ind]
-            for day_ind in range(len(sample))
-        }
+        conditioning_dict = {'z': sample}
         return conditioning_dict
 
     def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
