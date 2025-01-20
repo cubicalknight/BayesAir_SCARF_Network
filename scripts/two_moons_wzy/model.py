@@ -355,6 +355,59 @@ def two_moons_wzy_model(device, states, **kwargs):
 
     return y
 
+def two_moons_wzy_model_even_simpler(device, states, **kwargs):
+
+    obs_none = kwargs.get("obs_none", False)
+
+    w = pyro.sample(
+        "w",
+        dist.Beta(
+            torch.tensor(1.0, device=device),
+            torch.tensor(1.0, device=device)
+        )
+    )
+    
+    # print(w)
+    w_s = torch.zeros(w.shape, device=device)
+    w_s[w >  .5] = 1.0
+    w_s[w <= .5] = 0.0
+
+    failure = pyro.sample(
+        "failure",
+        dist.RelaxedBernoulliStraightThrough(
+            temperature=torch.tensor(0.1, device=device),
+            probs=w_s,
+        ),
+    )
+
+    loc = failure - .5
+
+    z_x = loc
+    z_y = loc
+
+    z = torch.stack(
+        (z_x, z_y), axis=-1
+    )
+
+    z = pyro.deterministic(
+        "z", z
+    )
+
+    # with pyro.plate("data", n):
+    for day_ind in pyro.markov(range(len(states)), history=1):
+        var_prefix = f'{day_ind}_'
+
+        y = pyro.sample(
+            var_prefix + "y",
+            dist.Normal(
+                z,
+                torch.tensor([0.1, 0.1]).to(device),
+            ).to_event(1),
+            obs=states[day_ind] if not obs_none else None,
+        )
+
+    return y
+
 def generate_two_moons_data_using_model(n, m, device, **kwargs):
 
     w = torch.rand(n).to(device)
@@ -371,11 +424,16 @@ def generate_two_moons_data_using_model(n, m, device, **kwargs):
     states_list = []
     z_list = []
 
+    if kwargs.get("even_simpler", False):
+        model = two_moons_wzy_model_even_simpler
+    else:
+        model = two_moons_wzy_model
+
     for i in range(n):
         conditioning_dict = {'w': w_list[i]}
 
         model_trace = pyro.poutine.trace(
-            pyro.poutine.condition(two_moons_wzy_model, data=conditioning_dict)
+            pyro.poutine.condition(model, data=conditioning_dict)
         ).get_trace(
             device=device,
             states=states,

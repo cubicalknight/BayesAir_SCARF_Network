@@ -138,12 +138,12 @@ def run(
     def plot_things(samples, labels, title=None):
         plt.figure(figsize=(4, 4))
         plt.scatter(*samples.T, s=1, c=labels, cmap="bwr")
-        # Turn off axis ticks
-        plt.xticks([])
-        plt.yticks([])
-        plt.axis("off")
-        plt.ylim([-1.1, 1.1])
-        plt.xlim([-1.7, 1.7])
+        # # Turn off axis ticks
+        # plt.xticks([])
+        # plt.yticks([])
+        # plt.axis("off")
+        plt.ylim([-2.0, 2.0])
+        plt.xlim([-2.0, 2.0])
         if title is not None:
             plt.title(title)
         # Equal aspect
@@ -163,17 +163,19 @@ def run(
             c = 'r' if w > .5 else 'b'
             samples = y
             plt.scatter(*samples.T, s=1, c=c, cmap="bwr")
-        # Turn off axis ticks
-        plt.xticks([])
-        plt.yticks([])
-        plt.axis("off")
-        plt.ylim([-1.1, 1.1])
-        plt.xlim([-1.7, 1.7])
+        # # Turn off axis ticks
+        # plt.xticks([])
+        # plt.yticks([])
+        # plt.axis("off")
+        # plt.ylim([-1.1, 1.1])
+        # plt.xlim([-1.7, 1.7])
+        plt.ylim([-2.0, 2.0])
+        plt.xlim([-2.0, 2.0])
         # Equal aspect
         plt.gca().set_aspect("equal")
         plt.show()
 
-    n_days = 100
+    n_days = 20
     m_per_day = 10
 
     # y_obs, w_obs = generate_two_moons_data_hierarchical(n_days, device)
@@ -183,12 +185,14 @@ def run(
     y_list_failure, w_list_failure, states_list_failure, z_list_failure = \
         generate_two_moons_data_using_model(
             n_days, m_per_day, device, 
-            failure_only=True, return_states=True, return_z=True
+            failure_only=True, return_states=True, return_z=True, 
+            even_simpler=True,
         )
     y_list_nominal, w_list_nominal, states_list_nominal, z_list_nominal = \
         generate_two_moons_data_using_model(
             n_days, m_per_day, device, 
-            nominal_only=True, return_states=True, return_z=True
+            nominal_only=True, return_states=True, return_z=True,
+            even_simpler=True,
         )
     
     # plot_stuff(y_list_failure, w_list_failure)
@@ -226,10 +230,11 @@ def run(
         context=1,
         hidden_features=(64, 64),
     ).to(device)
-    q_guide = ConditionalGaussianMixture(
-        n_features=2,
-        n_context=1,
-    )
+    # q_guide = ConditionalGaussianMixture(
+    #     n_features=2,
+    #     n_context=1,
+    # )
+
     # print(states)
     # label = torch.tensor([1.0], device=device)
     # print(q_guide(label).rsample_and_log_prob())
@@ -262,9 +267,11 @@ def run(
         ra=ra,
         q_guide=q_guide,
         r_guide=None,
-        w_subsample_list=w_list_failure,#+w_list_nominal,
-        y_subsample_list=y_list_failure,#+y_list_nominal,
+        w_subsample_list=w_list_failure+w_list_nominal,
+        y_subsample_list=y_list_failure+y_list_nominal,
     )
+
+    # print(wzy.yw_regimes)
 
     q_optimizer = torch.optim.Adam(
         wzy.q_guide.parameters(),
@@ -284,24 +291,24 @@ def run(
         zw_optimizer, step_size=lr_steps, gamma=lr_gamma
     )
 
+    losses = []
     pbar = tqdm(range(100))
     for i in pbar:
-        zw_optimizer.zero_grad()
-        loss = wzy.q_elbo_loss()
-        loss.backward()
-        zw_optimizer.step()
-        zw_scheduler.step()
-        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
-
-    pbar = tqdm(range(100))
-    for i in pbar:
+        # zw_optimizer.zero_grad()
         q_optimizer.zero_grad()
         loss = wzy.q_elbo_loss()
         loss.backward()
+        losses.append(loss.detach())
+        # zw_optimizer.step()
+        # zw_scheduler.step()
         q_optimizer.step()
         q_scheduler.step()
         pbar.set_description(f'q_elbo_loss: {loss:.3f}')
 
+    plt.figure()
+    plt.plot(losses)
+    plt.show()
+
     label = torch.tensor([1.0], device=device)
     samples = q_guide(label).sample((1000,))
     plot_things(samples, 'r')
@@ -310,13 +317,13 @@ def run(
     samples = q_guide(label).sample((1000,))
     plot_things(samples, 'b')
 
-    label = torch.tensor([1.0], device=device)
-    samples = wzy.zw.dist(label).sample((1000,))
-    plot_things(samples, 'r')
+    # label = torch.tensor([1.0], device=device)
+    # samples = wzy.zw.dist(label).sample((1000,))
+    # plot_things(samples, 'r')
 
-    label = torch.tensor([0.0], device=device)
-    samples = wzy.zw.dist(label).sample((1000,))
-    plot_things(samples, 'b')
+    # label = torch.tensor([0.0], device=device)
+    # samples = wzy.zw.dist(label).sample((1000,))
+    # plot_things(samples, 'b')
 
 
 
