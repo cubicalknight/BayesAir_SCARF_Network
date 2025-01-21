@@ -145,7 +145,7 @@ class NetworkState:
                     # self._assign_times_cancel(flight, var_prefix)
 
                     # dummy queue entry to match the function requirements, not used
-                    airport._assign_cancellation(QueueEntry(flight, 0.0), var_prefix)
+                    # airport._assign_cancellation(QueueEntry(flight, 0.0), var_prefix)
 
                     # print(f"{flight} cancelled")
                     self.completed_flights.append(flight)

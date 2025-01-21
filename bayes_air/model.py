@@ -267,6 +267,8 @@ def augmented_air_traffic_network_model(
     max_holding_time: float = None,
 
     max_waiting_time: float = None,
+
+    do_mle: bool = False
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -324,7 +326,7 @@ def augmented_air_traffic_network_model(
     # Define system-level parameters
     runway_use_time_std_dev = pyro.param(
         "runway_use_time_std_dev",
-        torch.tensor(0.1, device=device),  # used to be 0.025
+        torch.tensor(0.001, device=device),  # used to be 0.025
         constraint=dist.constraints.positive,
     )
     travel_time_variation = pyro.param(
@@ -343,14 +345,14 @@ def augmented_air_traffic_network_model(
 
     airport_turnaround_times = {
         t_idx: {
-            code: pyro.sample(
-                f"{code}_{t_idx}_mean_turnaround_time",
-                dist.Gamma(
-                    torch.tensor(1.0, device=device), 
-                    torch.tensor(2.0, device=device)
-                ),
-            )
-            # code: torch.tensor(0.5, device=device) # debugging
+            # code: pyro.sample(
+            #     f"{code}_{t_idx}_mean_turnaround_time",
+            #     dist.Gamma(
+            #         torch.tensor(1.0, device=device), 
+            #         torch.tensor(2.0, device=device)
+            #     ).mask(not do_mle),
+            # )
+            code: torch.tensor(0.5, device=device) # debugging
             for code in network_airport_codes
         }
         for t_idx in range(num_mean_turnaround_time)
@@ -380,16 +382,18 @@ def augmented_air_traffic_network_model(
     elif use_failure_prior:
         mst_dist = _gamma_dist_from_mean_std(0.025, 0.015)
     else:
-        mst_dist = dist.Uniform(
-            torch.tensor(1/100.0, device=device),
-            torch.tensor(1/20.0, device=device)
+        mst_dist = dist.AffineBeta(
+            torch.tensor(1.0, device=device),
+            torch.tensor(1.0, device=device),
+            loc=torch.tensor(.010).to(device),
+            scale=torch.tensor(.020).to(device),
         )
 
     airport_service_times = {
         t_idx: {
             code: pyro.sample(
                 f"{code}_{t_idx}_mean_service_time",
-                mst_dist
+                mst_dist.mask(not do_mle)
             )
             for code in network_airport_codes
         }
@@ -398,40 +402,40 @@ def augmented_air_traffic_network_model(
 
     # with LGA only this is empty...
     network_travel_times = {
-        (origin, destination): pyro.sample(
-            f"travel_time_{origin}_{destination}",
-            dist.Gamma(
-                torch.tensor(4.0, device=device), 
-                torch.tensor(1.25, device=device)
-            ),
-        )
-        for origin in network_airport_codes
-        for destination in network_airport_codes
-        if origin != destination
+        # (origin, destination): pyro.sample(
+        #     f"travel_time_{origin}_{destination}",
+        #     dist.Gamma(
+        #         torch.tensor(4.0, device=device), 
+        #         torch.tensor(1.25, device=device)
+        #     ).mask(not do_mle),
+        # )
+        # for origin in network_airport_codes
+        # for destination in network_airport_codes
+        # if origin != destination
     }
 
     if include_cancellations:
         airport_initial_available_aircraft = {
             code: torch.exp(
-                pyro.sample(
-                    f"{code}_log_initial_available_aircraft",
-                    dist.Normal(
-                        torch.tensor(1.0, device=device),
-                        torch.tensor(1.0, device=device),
-                    ),
-                )
-                # torch.tensor(3.0, device=device) # debugging
+                # pyro.sample(
+                #     f"{code}_log_initial_available_aircraft",
+                #     dist.Normal(
+                #         torch.tensor(1.0, device=device),
+                #         torch.tensor(1.0, device=device),
+                #     ).mask(not do_mle),
+                # )
+                torch.tensor(10.0, device=device) # debugging
             )
             for code in network_airport_codes
         }
         airport_base_cancel_prob = {
             t_idx: {
                 code: torch.exp(
-                    -pyro.sample(
-                        f"{code}_{t_idx}_base_cancel_neg_logprob",
-                        _gamma_dist_from_mean_std(3.0, 1.0)
-                    ) # note the negative
-                    # torch.tensor(-3.0, device=device) # testing
+                    # -pyro.sample(
+                    #     f"{code}_{t_idx}_base_cancel_neg_logprob",
+                    #     _gamma_dist_from_mean_std(3.0, 1.0).mask(not do_mle)
+                    # ) # note the negative
+                    torch.tensor(-3.0, device=device) # testing
                 )
                 for code in network_airport_codes
             }
@@ -455,10 +459,11 @@ def augmented_air_traffic_network_model(
     if model_incoming_residual_departure_delay:
         incoming_residual_departure_delay = {
             t_idx: {
-                code: pyro.sample(
-                    f"{code}_{t_idx}_residual_departure_delay",
-                    _gamma_dist_from_mean_std(.5, 1)
-                )
+                # code: pyro.sample(
+                #     f"{code}_{t_idx}_residual_departure_delay",
+                #     _gamma_dist_from_mean_std(.5, 1).mask(not do_mle)
+                # )
+                code: torch.tensor(0.0).to(device)
                 for code in network_airport_codes
             }
             for t_idx in range(num_incoming_residual_delay)
@@ -474,15 +479,15 @@ def augmented_air_traffic_network_model(
     # trying something
     incoming_travel_times = {
         (origin, destination): 
-            pyro.sample(
-                f"travel_time_{origin}_{destination}",
-                _gamma_dist_from_mean_std(
-                    travel_times_dict[(origin, destination)], .5
-                )
-                if travel_times_dict is not None else
-                _gamma_dist_from_mean_std(2.0, 1.5)
-            )
-            # travel_times_dict[(origin, destination)]
+            # pyro.sample(
+            #     f"travel_time_{origin}_{destination}",
+            #     _gamma_dist_from_mean_std(
+            #         travel_times_dict[(origin, destination)], .5
+            #     ).mask(not do_mle)
+            #     if travel_times_dict is not None else
+            #     _gamma_dist_from_mean_std(2.0, 1.5).mask(not do_mle)
+            # )
+            travel_times_dict[(origin, destination)]
         for origin in incoming_airport_codes
         for destination in network_airport_codes
     }
@@ -507,14 +512,14 @@ def augmented_air_traffic_network_model(
                     torch.tensor(soft_max_holding_time, device=device),
                     dist.constraints.nonnegative
                 )
-                if soft_max_holding_time is not None
-                else pyro.sample(
-                    f"{code}_soft_max_holding_time",
-                    dist.Uniform(
-                        torch.tensor(0.0, device=device),
-                        torch.tensor(max_holding_time, device=device)
-                    )
-                )
+                # if soft_max_holding_time is not None
+                # else pyro.sample(
+                #     f"{code}_soft_max_holding_time",
+                #     dist.Uniform(
+                #         torch.tensor(0.0, device=device),
+                #         torch.tensor(max_holding_time, device=device)
+                #     ).mask(not do_mle)
+                # )
             )
             for code in network_airport_codes
         }
