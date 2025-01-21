@@ -319,10 +319,12 @@ class AugmentedNetworkState():
         ready_times = []
         new_pending_incoming_flights = []
         for flight in self.pending_incoming_flights:
-            if flight.scheduled_departure_time <= time:
+            # if flight.scheduled_departure_time <= time:
+            if flight.adjusted_departure_time <= time:
                 ready_to_depart_incoming_flights.append(flight)
                 # TODO: better departure time...
-                ready_times.append(flight.scheduled_departure_time)
+                # ready_times.append(flight.scheduled_departure_time)
+                ready_times.append(flight.adjusted_departure_time)
             else:
                 new_pending_incoming_flights.append(flight)
         self.pending_incoming_flights = new_pending_incoming_flights

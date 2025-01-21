@@ -615,44 +615,7 @@ def plot_hourly_delays(df):
     return fig
 
 
-# TODO: deal with all of the above
-
-def train(
-    network_airport_codes, 
-    # nominal_days, 
-    # failure_days,
-    svi_steps, 
-    n_samples, 
-    svi_lr, 
-    plot_every, 
-    nominal=True,
-    day_nums=[1],
-):
-    pyro.clear_param_store()  # avoid leaking parameters across runs
-    pyro.enable_validation(True)
-    pyro.set_rng_seed(1)
-
-    # Avoid plotting error
-    matplotlib.use("Agg")
-
-    # # Set the number of starting aircraft at each airport
-    # starting_aircraft = 50
-
-    # Hyperparameters
-    dt = 0.1 # .2
-
-    days_str = [
-        f"2019-07-{day:02d}"
-        for day in day_nums
-    ]
-    days = pd.to_datetime(days_str)
-    num_days = len(days)
-
-    data = ba_dataloader.load_remapped_data_bts(days)
-
-    num_flights = sum([len(df) for df in data.values()])
-    print(f"Number of flights: {num_flights}")
-
+def make_travel_times_dict_and_observation_df(data, network_airport_codes):
     # Estimate travel times between each pair
     all_data_df = pd.concat(data.values())
     all_data_df["actual_travel_time"] = (
@@ -717,6 +680,10 @@ def train(
         ]
     ]
 
+    return travel_times_dict, observations_df
+
+
+def make_states(data, network_airport_codes):
     # Convert each day into a schedule
     states = []
     for day_str, schedule_df in data.items():
@@ -744,6 +711,54 @@ def train(
         )
         states.append(state)
 
+
+# TODO: deal with all of the above
+
+def train(
+    network_airport_codes, 
+    # nominal_days, 
+    # failure_days,
+    svi_steps, 
+    n_samples, 
+    svi_lr, 
+    plot_every, 
+    nominal=True,
+    day_nums=[1],
+):
+    pyro.clear_param_store()  # avoid leaking parameters across runs
+    pyro.enable_validation(True)
+    pyro.set_rng_seed(1)
+
+    # Avoid plotting error
+    matplotlib.use("Agg")
+
+    # # Set the number of starting aircraft at each airport
+    # starting_aircraft = 50
+
+    # Hyperparameters
+    dt = 0.1 # .2
+
+    days_str = [
+        f"2019-07-{day:02d}"
+        for day in day_nums
+    ]
+    days = pd.to_datetime(days_str)
+    num_days = len(days)
+
+    data = ba_dataloader.load_remapped_data_bts(days)
+
+    num_flights = sum([len(df) for df in data.values()])
+    print(f"Number of flights: {num_flights}")
+
+    travel_times_dict, observations_df = \
+        make_travel_times_dict_and_observation_df(
+            data, network_airport_codes
+        ) 
+
+    states = make_states(data, network_airport_codes)
+
+    
+
     # Re-scale the ELBO by the number of days
     model = functools.partial(
         augmented_air_traffic_network_model,
@@ -761,10 +776,6 @@ def train(
 
         # use_nominal_prior=nominal,
         # use_failure_prior=not nominal,
-
-        # max_holding_time=1.0,
-        # soft_max_holding_time=None,
-        # max_waiting_time=5.0,
         do_mle=True
     )
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
