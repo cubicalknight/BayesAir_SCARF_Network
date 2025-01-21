@@ -313,8 +313,8 @@ def run(
     #     l += yz.y_given_z_log_prob_regime(failure_regimes[i]) * failure_regimes[i].weight
     # print(l)
 
-    # ra = ThresholdTwoMoonsRA(device)
-    ra = MLPTwoMoonsRA(1, 4, 1).to(device)
+    ra = ThresholdTwoMoonsRA(device)
+    # ra = MLPTwoMoonsRA(1, 4, 1).to(device)
     # zw = NSFTwoMoonsZW(device)
     zw = GaussianMixtureTwoMoonsZW(device)
     zw.dist.means = torch.nn.Parameter(
@@ -372,10 +372,10 @@ def run(
 
     losses = []
     thresholds = []
-    pbar = tqdm(range(300))
+    pbar = tqdm(range(301))
     for i in pbar:
         q_optimizer.zero_grad()
-        ra_optimizer.zero_grad()
+        # ra_optimizer.zero_grad()
 
         loss = wzy.q_elbo_loss()
         loss.backward()
@@ -384,16 +384,31 @@ def run(
         q_optimizer.step()
         q_scheduler.step()
 
-        ra_optimizer.step()
-        ra_scheduler.step()
+        # ra_optimizer.step()
+        # ra_scheduler.step()
 
-        pbar.set_description(f'q_elbo_loss: {loss:.3f}')
-        # pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
-        # thresholds.append(wzy.ra.threshold.item())
+        # pbar.set_description(f'q_elbo_loss: {loss:.3f}')
+        pbar.set_description(f'q_elbo_loss: {loss:.3f}, w threshold: {wzy.ra.threshold.item():.3f}')
+        # wzy.ra.threshold.item()
+        thresholds.append(wzy.ra.threshold.item())
+
+        if i % 50 == 0:
+            label = torch.tensor([1.0], device=device)
+            samples = q_guide(label).sample((1000,))
+            # print(samples)
+            # plot_things(samples, 'r', no_axlim=True)
+            plot_things(samples, 'r', no_axlim=False, 
+                        title=f'[failure] iter {i}, learned threshold={wzy.ra.threshold.item():.3f}')
+
+            label = torch.tensor([0.0], device=device)
+            samples = q_guide(label).sample((1000,))
+            # plot_things(samples, 'b', no_axlim=True)
+            plot_things(samples, 'b', no_axlim=False,
+                        title=f'[nominal] iter {i}, learned threshold={wzy.ra.threshold.item():.3f}')
 
     plt.figure()
     plt.plot(losses, label="loss")
-    # plt.plot(thresholds, label="thresholds")
+    plt.plot(thresholds, label="thresholds")
     plt.legend()
     plt.show()
 

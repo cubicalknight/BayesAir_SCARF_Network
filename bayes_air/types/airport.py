@@ -190,120 +190,119 @@ class Airport:
                 self._assign_success(queue_entry, var_prefix)
 
         return departed_flights, landed_flights, cancelled_flights, diverted_flights
-    
 
-    def _deterministic_time(self, flight, var_prefix, suffix, value, device):
-        return pyro.deterministic(
-            var_prefix + str(flight) + suffix,
-            Time(value).to(device)
-        )
+    # def _deterministic_time(self, flight, var_prefix, suffix, value, device):
+    #     return pyro.deterministic(
+    #         var_prefix + str(flight) + suffix,
+    #         Time(value).to(device)
+    #     )
     
-    def _deterministic_tensor(self, flight, var_prefix, suffix, value, device):
-        return pyro.deterministic(
-            var_prefix + str(flight) + suffix,
-            torch.tensor(value).to(device)
-        )
+    # def _deterministic_tensor(self, flight, var_prefix, suffix, value, device):
+    #     return pyro.deterministic(
+    #         var_prefix + str(flight) + suffix,
+    #         torch.tensor(value).to(device)
+    #     )
     
-    def _sample_time(self, flight, var_prefix, suffix, value, device, std=None, obs=None):
-        if std is None:
-            return pyro.sample(
-                var_prefix + str(flight) + suffix,
-                dist.Delta(Time(value).to(device))
-            )
-        else:
-            return pyro.sample(
-                var_prefix + str(flight) + suffix,
-                dist.Normal(
-                    Time(value).to(device), 
-                    Time(std).to(device) # arbitrary, shouldn't matter
-                ),
-                obs=obs
-            )
+    # def _sample_time(self, flight, var_prefix, suffix, value, device, std=None, obs=None):
+    #     if std is None:
+    #         return pyro.sample(
+    #             var_prefix + str(flight) + suffix,
+    #             dist.Delta(Time(value).to(device))
+    #         )
+    #     else:
+    #         return pyro.sample(
+    #             var_prefix + str(flight) + suffix,
+    #             dist.Normal(
+    #                 Time(value).to(device), 
+    #                 Time(std).to(device) # arbitrary, shouldn't matter
+    #             ),
+    #             obs=obs
+    #         )
     
-    def _sample_tensor(self, flight, var_prefix, suffix, value, device, std=None, obs=None):
-        if std is None:
-            return pyro.deterministic(
-                var_prefix + str(flight) + suffix,
-                dist.Delta(torch.tensor(value).to(device))
-            )
-        else:
-            return pyro.sample(
-                var_prefix + str(flight) + suffix,
-                dist.Normal(
-                    torch.tensor(value).to(device),
-                    torch.tensor(std).to(device)
-                ),
-                obs=obs
-            )
+    # def _sample_tensor(self, flight, var_prefix, suffix, value, device, std=None, obs=None):
+    #     if std is None:
+    #         return pyro.deterministic(
+    #             var_prefix + str(flight) + suffix,
+    #             dist.Delta(torch.tensor(value).to(device))
+    #         )
+    #     else:
+    #         return pyro.sample(
+    #             var_prefix + str(flight) + suffix,
+    #             dist.Normal(
+    #                 torch.tensor(value).to(device),
+    #                 torch.tensor(std).to(device)
+    #             ),
+    #             obs=obs
+    #         )
     
-    def _assign_success(
-        self,
-        queue_entry: QueueEntry,
-        var_prefix: str = "",
-    ):
-        flight = queue_entry.flight
-        device = flight.scheduled_departure_time.device
+    # def _assign_success(
+    #     self,
+    #     queue_entry: QueueEntry,
+    #     var_prefix: str = "",
+    # ):
+    #     flight = queue_entry.flight
+    #     device = flight.scheduled_departure_time.device
 
-        def zero_det_tensor(suffix):
-            return self._deterministic_tensor(flight, var_prefix, suffix, 0.0, device)
+    #     def zero_det_tensor(suffix):
+    #         return self._deterministic_tensor(flight, var_prefix, suffix, 0.0, device)
         
-        flight.simulated_failed = zero_det_tensor("_failed")
+    #     flight.simulated_failed = zero_det_tensor("_failed")
     
-    def _assign_cancellation(
-        self,
-        queue_entry: QueueEntry,
-        var_prefix: str = "",
-    ):
-        flight = queue_entry.flight
-        device = flight.scheduled_departure_time.device
+    # def _assign_cancellation(
+    #     self,
+    #     queue_entry: QueueEntry,
+    #     var_prefix: str = "",
+    # ):
+    #     flight = queue_entry.flight
+    #     device = flight.scheduled_departure_time.device
 
-        def zero_det_time(suffix):
-            return self._deterministic_time(flight, var_prefix, suffix, 0.0, device)
-        def one_det_tensor(suffix):
-            return self._deterministic_tensor(flight, var_prefix, suffix, 1.0, device)
-        def zero_sample_time(suffix):
-            return self._sample_time(flight, var_prefix, suffix, 0.0, device, std=1.0)
+    #     def zero_det_time(suffix):
+    #         return self._deterministic_time(flight, var_prefix, suffix, 0.0, device)
+    #     def one_det_tensor(suffix):
+    #         return self._deterministic_tensor(flight, var_prefix, suffix, 1.0, device)
+    #     def zero_sample_time(suffix):
+    #         return self._sample_time(flight, var_prefix, suffix, 0.0, device, std=1.0)
 
-        if queue_entry.assigned_service_time is None:
-            zero_sample_time("_departure_service_time")
+    #     if queue_entry.assigned_service_time is None:
+    #         zero_sample_time("_departure_service_time")
 
-        flight.simulated_departure_time = zero_det_time("_simulated_departure_time")
+    #     flight.simulated_departure_time = zero_det_time("_simulated_departure_time")
 
-        # flight.simulated_cancelled = one_sample_tensor("_cancelled")
-        # TODO: actually how do we handle this two possible sample site thing?
-        flight.simulated_failed = one_det_tensor("_failed")
+    #     # flight.simulated_cancelled = one_sample_tensor("_cancelled")
+    #     # TODO: actually how do we handle this two possible sample site thing?
+    #     flight.simulated_failed = one_det_tensor("_failed")
 
-        # print(
-        #     f"\t{queue_entry.flight} assigned cancellation (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
-        # )
+    #     # print(
+    #     #     f"\t{queue_entry.flight} assigned cancellation (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
+    #     # )
 
-    def _assign_diversion(
-        self,
-        queue_entry: QueueEntry,
-        var_prefix: str = ""
-    ):
-        flight = queue_entry.flight
-        device = flight.scheduled_arrival_time.device
+    # def _assign_diversion(
+    #     self,
+    #     queue_entry: QueueEntry,
+    #     var_prefix: str = ""
+    # ):
+    #     flight = queue_entry.flight
+    #     device = flight.scheduled_arrival_time.device
 
-        def zero_det_time(suffix):
-            return self._deterministic_time(flight, var_prefix, suffix, 0.0, device)
-        def one_det_tensor(suffix, obs=None):
-            return self._deterministic_tensor(flight, var_prefix, suffix, 1.0, device)
-        def zero_sample_time(suffix):
-            return self._sample_time(flight, var_prefix, suffix, 0.0, device, std=1.0)
+    #     def zero_det_time(suffix):
+    #         return self._deterministic_time(flight, var_prefix, suffix, 0.0, device)
+    #     def one_det_tensor(suffix, obs=None):
+    #         return self._deterministic_tensor(flight, var_prefix, suffix, 1.0, device)
+    #     def zero_sample_time(suffix):
+    #         return self._sample_time(flight, var_prefix, suffix, 0.0, device, std=1.0)
 
-        if queue_entry.assigned_service_time is None:
-            zero_sample_time("_arrival_service_time")
+    #     if queue_entry.assigned_service_time is None:
+    #         zero_sample_time("_arrival_service_time")
 
-        zero_sample_time("_turnaround_time") # is this necessary?
-        flight.simulated_arrival_time = zero_det_time("_simulated_arrival_time")
+    #     zero_sample_time("_turnaround_time") # is this necessary?
+    #     flight.simulated_arrival_time = zero_det_time("_simulated_arrival_time")
 
-        # flight.simulated_diverted = one_sample_tensor("_diverted")
-        flight.simulated_failed = one_det_tensor("_failed")
+    #     # flight.simulated_diverted = one_sample_tensor("_diverted")
+    #     flight.simulated_failed = one_det_tensor("_failed")
 
-        # print(
-        #     f"\t{queue_entry.flight} assigned diversion (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
-        # )
+    #     # print(
+    #     #     f"\t{queue_entry.flight} assigned diversion (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
+    #     # )
         
 
     def _assign_service_time(
@@ -321,16 +320,16 @@ class Airport:
         var_name += "_departure" if departing else "_arrival"
         var_name += "_service_time"
 
-        # service_time = pyro.sample(
-        #     var_name,
-        #     dist.Exponential(
-        #         1.0 / self.mean_service_time.reshape(-1)
-        #     ),
-        # ).squeeze() # TODO: why? some weird shape issue that randomly appears?
-        # # is there like something we have to do here when sampling?
-        service_time = dist.Exponential(
-            1.0 / self.mean_service_time.reshape(-1)
-        ).rsample().squeeze()
+        service_time = pyro.sample(
+            var_name,
+            dist.Exponential(
+                1.0 / self.mean_service_time.reshape(-1)
+            ),
+        ).squeeze() # TODO: why? some weird shape issue that randomly appears?
+        # is there like something we have to do here when sampling?
+        # service_time = dist.Exponential(
+        #     1.0 / self.mean_service_time.reshape(-1)
+        # ).rsample().squeeze()
 
         # if service_time.size() != torch.Size([]):
         #     raise ValueError(service_time)
@@ -414,11 +413,11 @@ class Airport:
             flight: The flight to assign a turnaround time to.
             var_prefix: prefix for sampled variable names.
         """
-        # turnaround_time = pyro.sample(
-        #     var_prefix + str(flight) + "_turnaround_time",
-        #     dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
-        # )
-        turnaround_time = dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev).rsample().squeeze()
+        turnaround_time = pyro.sample(
+            var_prefix + str(flight) + "_turnaround_time",
+            dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
+        )
+        # turnaround_time = dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev).rsample().squeeze()
         # print(flight.simulated_arrival_time, turnaround_time)
         # exit()
         self.turnaround_queue.append(flight.simulated_arrival_time + turnaround_time)
