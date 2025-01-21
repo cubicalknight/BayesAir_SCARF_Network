@@ -121,43 +121,43 @@ class Airport:
         # if this is too slow then remove it i guess
         # self.runway_queue.sort(key=lambda x: x.queue_start_time)
 
-        # landing flights that have been waiting for too long
-        # based on elapsed time since entering queue
-        if self.use_max_holding_time:
-            priority_runway_queue = []
-            regular_runway_queue = []
-            for qe in self.runway_queue:
-                no_service_time_assigned = qe.assigned_service_time is None
-                cannot_wait_longer = (time - qe.queue_start_time) > self.soft_max_holding_time
-                if no_service_time_assigned and cannot_wait_longer:
-                    priority_runway_queue.append(qe)
-                else:
-                    regular_runway_queue.append(qe)
-            self.runway_queue = priority_runway_queue + regular_runway_queue
+        # # landing flights that have been waiting for too long
+        # # based on elapsed time since entering queue
+        # if self.use_max_holding_time:
+        #     priority_runway_queue = []
+        #     regular_runway_queue = []
+        #     for qe in self.runway_queue:
+        #         no_service_time_assigned = qe.assigned_service_time is None
+        #         cannot_wait_longer = (time - qe.queue_start_time) > self.soft_max_holding_time
+        #         if no_service_time_assigned and cannot_wait_longer:
+        #             priority_runway_queue.append(qe)
+        #         else:
+        #             regular_runway_queue.append(qe)
+        #     self.runway_queue = priority_runway_queue + regular_runway_queue
 
-        # print([round(qe.queue_start_time.item(),2) for qe in self.runway_queue])
+        # # print([round(qe.queue_start_time.item(),2) for qe in self.runway_queue])
 
-        # process flights to be cancelled or diverted
-        fresh_runway_queue = []
-        for queue_entry in self.runway_queue:
-            flight = queue_entry.flight
-            arriving = queue_entry.flight.destination == self.code
-            departing = not arriving # TODO: should waiting apply to all?
+        # # process flights to be cancelled or diverted
+        # fresh_runway_queue = []
+        # for queue_entry in self.runway_queue:
+        #     flight = queue_entry.flight
+        #     arriving = queue_entry.flight.destination == self.code
+        #     departing = not arriving # TODO: should waiting apply to all?
 
-            if self.use_max_holding_time and arriving \
-                and queue_entry.total_wait_time > self.max_holding_time:
-                self._assign_diversion(queue_entry, var_prefix)
-                diverted_flights.append(flight)
+        #     if self.use_max_holding_time and arriving \
+        #         and queue_entry.total_wait_time > self.max_holding_time:
+        #         self._assign_diversion(queue_entry, var_prefix)
+        #         diverted_flights.append(flight)
 
-            elif self.use_max_waiting_time and departing \
-                and queue_entry.total_wait_time > self.max_waiting_time:
-                self._assign_cancellation(queue_entry, var_prefix)
-                cancelled_flights.append(flight)
+        #     elif self.use_max_waiting_time and departing \
+        #         and queue_entry.total_wait_time > self.max_waiting_time:
+        #         self._assign_cancellation(queue_entry, var_prefix)
+        #         cancelled_flights.append(flight)
 
-            else:
-                fresh_runway_queue.append(queue_entry)
+        #     else:
+        #         fresh_runway_queue.append(queue_entry)
 
-        self.runway_queue = fresh_runway_queue
+        # self.runway_queue = fresh_runway_queue
             
         while self.runway_queue and (
             self.runway_queue[0].assigned_service_time is None
@@ -321,13 +321,16 @@ class Airport:
         var_name += "_departure" if departing else "_arrival"
         var_name += "_service_time"
 
-        service_time = pyro.sample(
-            var_name,
-            dist.Exponential(
-                1.0 / self.mean_service_time.reshape(-1)
-            ),
-        ).squeeze() # TODO: why? some weird shape issue that randomly appears?
-        # is there like something we have to do here when sampling?
+        # service_time = pyro.sample(
+        #     var_name,
+        #     dist.Exponential(
+        #         1.0 / self.mean_service_time.reshape(-1)
+        #     ),
+        # ).squeeze() # TODO: why? some weird shape issue that randomly appears?
+        # # is there like something we have to do here when sampling?
+        service_time = dist.Exponential(
+            1.0 / self.mean_service_time.reshape(-1)
+        ).rsample().squeeze()
 
         # if service_time.size() != torch.Size([]):
         #     raise ValueError(service_time)
@@ -388,7 +391,8 @@ class Airport:
         """
 
         var_name = var_prefix + str(queue_entry.flight) + "_simulated_arrival_time"
-        obs = queue_entry.flight.actual_arrival_time if not self.obs_none else None
+        # obs = queue_entry.flight.actual_arrival_time if not self.obs_none else None
+        obs = None
 
         queue_entry.flight.simulated_arrival_time = pyro.sample(
             var_name,
@@ -410,10 +414,13 @@ class Airport:
             flight: The flight to assign a turnaround time to.
             var_prefix: prefix for sampled variable names.
         """
-        turnaround_time = pyro.sample(
-            var_prefix + str(flight) + "_turnaround_time",
-            dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
-        )
+        # turnaround_time = pyro.sample(
+        #     var_prefix + str(flight) + "_turnaround_time",
+        #     dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
+        # )
+        turnaround_time = dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev).rsample().squeeze()
+        # print(flight.simulated_arrival_time, turnaround_time)
+        # exit()
         self.turnaround_queue.append(flight.simulated_arrival_time + turnaround_time)
 
 

@@ -202,14 +202,17 @@ def plot_time_indexed_network_var(
             
             ax = axs[f"{plot_idx}"]
 
-            sns.histplot(
-                x=prefix,
-                hue="type",
-                ax=ax,
-                data=plotting_df,
-                color="blue",
-                kde=True,
-            )
+            # sns.histplot(
+            #     x=prefix,
+            #     hue="type",
+            #     ax=ax,
+            #     data=plotting_df,
+            #     color="blue",
+            #     kde=True,
+            # )
+            mle = plotting_df[prefix].mean()
+            ax.axvline(mle)
+            plt.title(f'{name} mle: {mle}')
 
             shared_axs.append(ax)
             
@@ -224,11 +227,13 @@ def plot_time_indexed_network_var(
 plot_service_times = functools.partial(
     plot_time_indexed_network_var,
     "mean_service_time",
+    plots_per_row=1,
 )
 
 plot_turnaround_times = functools.partial(
     plot_time_indexed_network_var,
     "mean_turnaround_time",
+    plots_per_row=1,
 )
 
 plot_base_cancel_prob = functools.partial(
@@ -427,14 +432,16 @@ def get_arrival_departures_rmses(
     departures_mse = departures_df["squared_dist"].mean()
     departures_rmse = np.sqrt(departures_mse)
 
-    arr_n_ignore = int(len(arrivals_df) * 0.025)
-    arrivals_mse_adj = (
-        arrivals_df
-        .drop(arrivals_df.nlargest(arr_n_ignore, "squared_dist").index)
-        ["squared_dist"]
-        .mean()
-    )
-    arrivals_rmse_adj = np.sqrt(arrivals_mse_adj)
+    # arr_n_ignore = int(len(arrivals_df) * 0.025)
+    # arrivals_mse_adj = (
+    #     arrivals_df
+    #     .drop(arrivals_df.nlargest(arr_n_ignore, "squared_dist").index)
+    #     ["squared_dist"]
+    #     .mean()
+    # )
+    # arrivals_rmse_adj = np.sqrt(arrivals_mse_adj)
+    arrivals_mse_adj = 0.0
+    arrivals_rmse_adj = 0.0
 
     dep_n_ignore = int(len(departures_df) * 0.025)
     departures_mse_adj = (
@@ -742,28 +749,29 @@ def train(
         augmented_air_traffic_network_model,
 
         travel_times_dict=travel_times_dict,
-        include_cancellations=True,
+        include_cancellations=False,#True,
 
-        # source_use_actual_departure_time=True,
-        source_use_actual_late_aircraft_delay=True,
-        source_use_actual_carrier_delay=True,
+        source_use_actual_departure_time=True,
+        # source_use_actual_late_aircraft_delay=True,
+        # source_use_actual_carrier_delay=True,
         # source_use_actual_security_delay=True,
 
         mean_service_time_effective_hrs=24,
         mean_turnaround_time_effective_hrs=24,
 
-        use_nominal_prior=nominal,
-        use_failure_prior=not nominal,
+        # use_nominal_prior=nominal,
+        # use_failure_prior=not nominal,
 
         # max_holding_time=1.0,
         # soft_max_holding_time=None,
         # max_waiting_time=5.0,
+        do_mle=True
     )
     model = pyro.poutine.scale(model, scale=1.0 / num_days)
 
     # Create an autoguide for the model
-    # auto_guide = pyro.infer.autoguide.AutoDelta(model)
-    auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
+    auto_guide = pyro.infer.autoguide.AutoDelta(model)
+    # auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
     # auto_guide = pyro.infer.autoguide.AutoLowRankMultivariateNormal(model)
 
 
@@ -779,7 +787,7 @@ def train(
     run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
     
     wandb.init(
-        project="bayes-air_july-2019_test-1",
+        project="bayes-air_july-2019_test-2",
         name=run_name,
         group="nominal" if nominal else "failure",
         config={
@@ -806,9 +814,14 @@ def train(
         loss = svi.step(states, dt)
         losses.append(loss)
 
-        pbar.set_description(f"ELBO loss: {loss:.2f}")
+        # pbar.set_description(f"ELBO loss: {loss:.2f}")
+        # print(auto_guide.median(states, dt))
+        # return
+        mst_mle = auto_guide.median(states, dt)["LGA_0_mean_service_time"].item()
+        pbar.set_description(f"ELBO loss: {loss:.2f}, MST MLE: {mst_mle:.6f}")
 
-        if i % rmses_record_every == 0 or i == svi_steps - 1:
+        if i % plot_every == 0 or i == svi_steps - 1:
+        # if i % rmses_record_every == 0 or i == svi_steps - 1:
             arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj, hourly_delays = \
             get_arrival_departures_rmses(
                 model, auto_guide, states, dt, observations_df, 1
@@ -825,24 +838,24 @@ def train(
 
         if i % plot_every == 0 or i == svi_steps - 1:
 
-            fig = plot_elbo_losses(losses)
-            wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
+            # fig = plot_elbo_losses(losses)
+            # wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
+            # plt.close(fig)
 
-            # print(arr_rmses, dep_rmses, rmse_idxs)
-            fig = plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs)
-            wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
+            # # print(arr_rmses, dep_rmses, rmse_idxs)
+            # fig = plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs)
+            # wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
+            # plt.close(fig)
 
-            fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
-            wandb.log({"Travel times": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
+            # fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
+            # wandb.log({"Travel times": wandb.Image(fig)}, commit=False)
+            # plt.close(fig)
 
             plotting_dict = {
-                "mean service times": plot_service_times,
-                "mean turnaround_times": plot_turnaround_times,
-                "starting aircraft": plot_starting_aircraft,
-                "baseline cancel probability": plot_base_cancel_prob,
+                # "mean service times": plot_service_times,
+                # "mean turnaround_times": plot_turnaround_times,
+                # "starting aircraft": plot_starting_aircraft,
+                # "baseline cancel probability": plot_base_cancel_prob,
                 # "soft max holding time": plot_soft_max_holding_time,
             }
         
@@ -859,7 +872,8 @@ def train(
             pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
             torch.save(auto_guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
-        wandb.log({"ELBO": loss})
+        # wandb.log({"ELBO": loss})
+        wandb.log({"ELBO": loss, "MST MLE": mst_mle}) # ?
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 
@@ -885,13 +899,18 @@ def train(
 @click.command()
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 # @click.option("--failure", is_flag=True, help="Use failure prior")
-@click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
+@click.option("--svi-steps", default=200, help="Number of SVI steps to run")
 @click.option("--n-samples", default=800, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
-@click.option("--plot-every", default=100, help="Plot every N steps")
-@click.option("--day", default=1, help="day")
+@click.option("--plot-every", default=50, help="Plot every N steps")
+# @click.option("--day", default=1, help="day")
+@click.option("--nominal", is_flag=True)
+# @click.option("--failure", is_flag=True)
+@click.option("--days", default=1, help="day")
+
+
 def train_cmd(
-    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, day
+    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, nominal,days
 ):
     # TODO: make this better
 
@@ -901,7 +920,20 @@ def train_cmd(
         20,24,25,26,27,28,29
     ]
 
-    nominal = day in nominal_days
+    failure_days = [
+        d for d in range(1,32)
+        if d not in nominal_days
+    ]
+
+    # nominal = day in nominal_days
+
+    # nominal = nominal
+
+    if not nominal:
+        day_nums = failure_days[:days]
+    else:
+        day_nums = nominal_days[:days]
+        
 
     network_airport_codes = network_airport_codes.split(',')
     train(
@@ -911,7 +943,8 @@ def train_cmd(
         svi_lr,
         plot_every,
         nominal,
-        day_nums=[day], # TODO: this is not great way of setting the day
+        # day_nums=[day], # TODO: this is not great way of setting the day
+        day_nums=day_nums
     )
 
 
