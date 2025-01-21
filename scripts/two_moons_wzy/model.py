@@ -431,22 +431,35 @@ def two_moons_wzy_model_plated(n, device, w_obs=None, y_obs=None):
         w_s[w >  .5] = 1.0
         w_s[w <= .5] = 0.0
 
-        failure = pyro.sample(
-            "failure",
+        # failure = pyro.sample(
+        #     "failure",
+        #     dist.RelaxedBernoulliStraightThrough(
+        #         temperature=torch.tensor(0.01, device=device),
+        #         probs=w_s,
+        #     ).mask(False),
+        # )
+
+        failure = (
             dist.RelaxedBernoulliStraightThrough(
                 temperature=torch.tensor(0.01, device=device),
                 probs=w_s,
-            ),
+            ).rsample((n,))
         )
 
         loc = failure * torch.pi
 
-        theta = pyro.sample(
-            "theta",
+        # theta = pyro.sample(
+        #     "theta",
+        #     dist.Beta(
+        #         torch.tensor(1.0, device=device),
+        #         torch.tensor(1.0, device=device)
+        #     ).mask(False),
+        # )
+        theta = (
             dist.Beta(
                 torch.tensor(1.0, device=device),
                 torch.tensor(1.0, device=device)
-            ),
+            ).rsample((n,))
         )
 
         theta = theta * torch.pi + loc
