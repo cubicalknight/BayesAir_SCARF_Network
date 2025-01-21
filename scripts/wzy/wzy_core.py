@@ -130,13 +130,21 @@ class PyroTwoMoonsYZ(PyroStatesModelYZ):
 
     def y_given_z_log_prob_regime(self, regime: RegimeData) -> torch.Tensor:
 
-        conditioning_dict = self.map_to_sample_sites(regime.z_subsample)
+        # conditioning_dict = self.map_to_sample_sites(regime.z_subsample)
+        conditioning_dict = {
+            'w': regime.w_subsample,
+            'z': regime.z_subsample,
+        }
         model_trace = pyro.poutine.trace(
             pyro.poutine.condition(self.model, data=conditioning_dict)
         ).get_trace(
             # states=regime.y_subsample # here y_subsample should have states?
             y_obs=regime.y_subsample
         )
+        # print(model_trace.nodes['y'])
+        # exit()
+
+        # print(regime.z_subsample.mean(dim=0).detach().numpy(), regime.y_subsample.mean(dim=0).detach().numpy())
 
         # model_logprob = model_trace.log_prob_sum()
         model_logprob = model_trace.log_prob_sum() / len(regime.w_subsample)
@@ -217,7 +225,7 @@ class ThresholdTwoMoonsRA(RegimeAssigner, nn.Module):
         nn.Module.__init__(self)
         self.device = device
         self.threshold = nn.Parameter(
-            torch.tensor([0.5]).to(device),
+            torch.tensor([0.2]).to(device),
             requires_grad=True
         )
         self.a = torch.tensor(100.0).to(device)
@@ -257,7 +265,7 @@ class MLPTwoMoonsRA(nn.Module, RegimeAssigner):
         return logits
     
     def get_mixture_label(self, x):
-        logits = self.forward(x)
+        logits = self.forward(x.mean())
         mixture_label = nn.functional.gumbel_softmax(logits, tau=1, hard=True)
         return mixture_label
     
@@ -349,40 +357,46 @@ class WZY(ABC):
             #     z_samples[i], z_logprobs[i] = self.q_guide(regime.label).rsample_and_log_prob()
             # z_sample = z_samples
             # z_logprob = z_logprobs.mean()
-            z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob()
+            n = len(regime.w_subsample)
+            z_sample, z_logprob = self.q_guide(regime.label).rsample_and_log_prob((n,))
             regime.z_subsample = z_sample
+            z_logprob = z_logprob.mean()
             # n = len(regime.w_subsample)
+            # y_given_z_logprob = self.yz.y_given_z_log_prob_regime(regime, **kwargs) 
+            y_given_z_logprob = self.q_guide(regime.label).log_prob(regime.y_subsample).mean()
             elbo += (
-                self.yz.y_given_z_log_prob_regime(regime, **kwargs) 
+                y_given_z_logprob
                 # + self.zw.z_given_w_log_prob_regime(regime, **kwargs) 
-                - z_logprob
+                # - z_logprob
             ) * regime.weight # weight can be equal, and maybe divide by flights ??
+
+            # print(regime.label.item(), y_given_z_logprob.item(), z_logprob.item(), z_sample.shape)
             # print(z_sample, z_logprob)
             # print(self.yz.y_given_z_log_prob_regime(regime, **kwargs), z_logprob)
         return elbo
             
-    def r_elbo_objective(self, regimes=None, **kwargs):
-        """
-        E_r [ p^ (y|w) - log r(w|y) ]
-        p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ] = ELBO_q (y, w)
-        """
-        if regimes is None:
-            regimes = self.yw_regimes
-        elbo = torch.tensor(0.0).to(self.device)
-        for regime in regimes:
-            w_sample, w_logprob = self.r_guide(regime.label).rsample_and_log_prob()
-            regime.w_subsample = w_sample
-            # regimes should contain the y value and appropriate label corresponding to w ?
-            elbo += (
-                self.q_elbo_objective(regimes, **kwargs) - w_logprob
-            )
-        return elbo
+    # def r_elbo_objective(self, regimes=None, **kwargs):
+    #     """
+    #     E_r [ p^ (y|w) - log r(w|y) ]
+    #     p^ (y|w) = E_q [ log p(y,z|w) - log q(z|y,w) ] = ELBO_q (y, w)
+    #     """
+    #     if regimes is None:
+    #         regimes = self.yw_regimes
+    #     elbo = torch.tensor(0.0).to(self.device)
+    #     for regime in regimes:
+    #         w_sample, w_logprob = self.r_guide(regime.label).rsample_and_log_prob()
+    #         regime.w_subsample = w_sample
+    #         # regimes should contain the y value and appropriate label corresponding to w ?
+    #         elbo += (
+    #             self.q_elbo_objective(regimes, **kwargs) - w_logprob
+    #         )
+    #     return elbo
     
     def q_elbo_loss(self, **kwargs):
         return -self.q_elbo_objective(**kwargs)
     
-    def r_elbo_loss(self, **kwargs):
-        return -self.r_elbo_objective(**kwargs)
+    # def r_elbo_loss(self, **kwargs):
+    #     return -self.r_elbo_objective(**kwargs)
 
 
     
