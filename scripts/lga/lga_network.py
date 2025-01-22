@@ -1267,7 +1267,7 @@ def run_cpu_tasks_in_parallel(tasks):
 @click.command()
 @click.option("--project", default="bayes-air-atrds-attempt-3")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
-# @click.option("--failure", is_flag=True, help="Use failure prior")
+
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
