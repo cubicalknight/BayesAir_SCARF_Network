@@ -995,6 +995,9 @@ def train(
     pyro.set_rng_seed(int(rng_seed))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        torch.set_default_device('cuda')
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
     # Avoid plotting error
     matplotlib.use("Agg")
@@ -1105,7 +1108,7 @@ def train(
         guide = pyro.infer.autoguide.AutoMultivariateNormal(model, init_loc_fn=init_loc_fn)
     elif posterior_guide == "iafnormal":
         guide = pyro.infer.autoguide.AutoIAFNormal(
-            model, num_transforms=3, hidden_dim=[3,3]
+            model, num_transforms=3, hidden_dim=[3,3],
         )
     elif posterior_guide == "delta":
         guide = pyro.infer.autoguide.AutoDelta(model, init_loc_fn=init_loc_fn)
@@ -1262,7 +1265,7 @@ def run_cpu_tasks_in_parallel(tasks):
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-2")
+@click.option("--project", default="bayes-air-atrds-attempt-3")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 # @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -1292,6 +1295,8 @@ def run_cpu_tasks_in_parallel(tasks):
 @click.option("--learn-together", is_flag=True)
 @click.option("--all-combos", is_flag=True)
 
+@click.option("--multiprocess", is_flag=True)
+
 
 
 def train_cmd(
@@ -1300,7 +1305,7 @@ def train_cmd(
     plot_every, rng_seed, gamma, dt, n_elbo_particles,
     prior_type, prior_scale, posterior_guide, 
     day_strs, year, month, start_day, end_day,
-    learn_together, all_combos,
+    learn_together, all_combos, multiprocess,
 ):
     # TODO: make this better
 
@@ -1362,32 +1367,53 @@ def train_cmd(
     pbar = tqdm(range(len(day_strs_list)))
     pbar.set_description('day')
     for i in pbar:
-        # pppbar = tqdm(range(len(ppp_params)), leave=False)
-        # pppbar.set_description('param combo')
-        # for j in pppbar:
-        tasks = [
-            # train(
-            functools.partial(
-                train,
-                project,
-                network_airport_codes,
-                svi_steps,
-                n_samples,
-                svi_lr,
-                gamma,
-                dt,
-                n_elbo_particles,
-                plot_every,
-                rng_seed,
-                day_strs_list[i],
-                # prior_type,
-                # prior_scale,
-                # posterior_guide,
-                *(ppp_params[j])
-            )
-            for j in range(len(ppp_params))
-        ]
-        run_cpu_tasks_in_parallel(tasks)
+        
+        if multiprocess:
+            tasks = [
+                # train(
+                functools.partial(
+                    train,
+                    project,
+                    network_airport_codes,
+                    svi_steps,
+                    n_samples,
+                    svi_lr,
+                    gamma,
+                    dt,
+                    n_elbo_particles,
+                    plot_every,
+                    rng_seed,
+                    day_strs_list[i],
+                    # prior_type,
+                    # prior_scale,
+                    # posterior_guide,
+                    *(ppp_params[j])
+                )
+                for j in range(len(ppp_params))
+            ]
+            run_cpu_tasks_in_parallel(tasks)
+
+        else:
+            pppbar = tqdm(range(len(ppp_params)), leave=False)
+            pppbar.set_description('param combo')
+            for j in pppbar:
+                train(
+                    project,
+                    network_airport_codes,
+                    svi_steps,
+                    n_samples,
+                    svi_lr,
+                    gamma,
+                    dt,
+                    n_elbo_particles,
+                    plot_every,
+                    rng_seed,
+                    day_strs_list[i],
+                    # prior_type,
+                    # prior_scale,
+                    # posterior_guide,
+                    *(ppp_params[j])
+                )
         # print(day_strs_list[i], *(ppp_params[j]))
 
 
