@@ -393,15 +393,20 @@ class Airport:
         # obs = queue_entry.flight.actual_arrival_time if not self.obs_none else None
         obs = None
 
-        queue_entry.flight.simulated_arrival_time = pyro.sample(
-            var_name,
+        # queue_entry.flight.simulated_arrival_time = pyro.sample(
+        #     var_name,
+        #     dist.Normal(
+        #         queue_entry.queue_start_time + queue_entry.total_wait_time,
+        #         self.runway_use_time_std_dev,
+        #     ),
+        #     obs=obs,
+        # )
+        queue_entry.flight.simulated_arrival_time = \
             dist.Normal(
                 queue_entry.queue_start_time + queue_entry.total_wait_time,
                 self.runway_use_time_std_dev,
-            ),
-            obs=obs,
-        )
-            
+            ).rsample()
+                    
         # print(
         #     f"\t{queue_entry.flight} arriving at {queue_entry.flight.simulated_arrival_time} (entered queue {queue_entry.queue_start_time} and waited {queue_entry.total_wait_time})"
         # )
