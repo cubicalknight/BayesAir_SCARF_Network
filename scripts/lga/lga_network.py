@@ -1269,7 +1269,7 @@ def run_cpu_tasks_in_parallel(tasks):
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-3")
+@click.option("--project", default="bayes-air-atrds-attempt-4")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
