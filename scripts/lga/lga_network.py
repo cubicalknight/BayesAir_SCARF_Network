@@ -1251,7 +1251,7 @@ def train(
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-attempt-2")
+@click.option("--project", default="bayes-air-atrds-attempt-2")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 # @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -1262,7 +1262,6 @@ def train(
 @click.option("--gamma", default=.4) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
-
 
 
 @click.option("--prior-type", default="empty", help="nominal/failure/empty")
