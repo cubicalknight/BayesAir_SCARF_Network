@@ -326,21 +326,20 @@ def augmented_air_traffic_network_model(
     # Define system-level parameters
     runway_use_time_std_dev = pyro.param(
         "runway_use_time_std_dev",
-        torch.tensor(0.001, device=device),  # used to be 0.025
+        torch.tensor(0.025, device=device),  # used to be 0.025
         constraint=dist.constraints.positive,
     )
     travel_time_variation = pyro.param(
         "travel_time_variation",
-        torch.tensor(0.1, device=device),  # used to be 0.05
+        torch.tensor(0.05, device=device),  # used to be 0.05
         constraint=dist.constraints.positive,
     )
     turnaround_time_variation = pyro.param(
         "turnaround_time_variation",
-        torch.tensor(0.1, device=device),  # used to be 0.05
+        torch.tensor(0.05, device=device),  # used to be 0.05
         constraint=dist.constraints.positive,
     )
 
-    # Sample latent variables for airports in network
     network_airport_codes = states[0].network_state.airports.keys()
 
     airport_turnaround_times = {
@@ -832,17 +831,17 @@ def augmented_air_traffic_network_model_simplified(
     # Define system-level parameters
     runway_use_time_std_dev = pyro.param(
         "runway_use_time_std_dev",
-        torch.tensor(0.001, device=device),  # used to be 0.025
+        torch.tensor(0.025, device=device),  # used to be 0.025
         constraint=dist.constraints.positive,
     )
     travel_time_variation = pyro.param(
         "travel_time_variation",
-        torch.tensor(0.1, device=device),  # used to be 0.05
+        torch.tensor(0.05, device=device),  # used to be 0.05
         constraint=dist.constraints.positive,
     )
     turnaround_time_variation = pyro.param(
         "turnaround_time_variation",
-        torch.tensor(0.1, device=device),  # used to be 0.05
+        torch.tensor(0.05, device=device),  # used to be 0.05
         constraint=dist.constraints.positive,
     )
 

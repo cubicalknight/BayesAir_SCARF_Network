@@ -186,8 +186,8 @@ class Airport:
                     self._assign_turnaround_time(flight, var_prefix)
                     landed_flights.append(flight)
 
-                # TODO: for >1 airport case we need to handle this more carefully...
-                self._assign_success(queue_entry, var_prefix)
+                # # TODO: for >1 airport case we need to handle this more carefully...
+                # self._assign_success(queue_entry, var_prefix)
 
         return departed_flights, landed_flights, cancelled_flights, diverted_flights
 
@@ -320,16 +320,16 @@ class Airport:
         var_name += "_departure" if departing else "_arrival"
         var_name += "_service_time"
 
-        service_time = pyro.sample(
-            var_name,
-            dist.Exponential(
-                1.0 / self.mean_service_time.reshape(-1)
-            ),
-        ).squeeze() # TODO: why? some weird shape issue that randomly appears?
-        # is there like something we have to do here when sampling?
-        # service_time = dist.Exponential(
-        #     1.0 / self.mean_service_time.reshape(-1)
-        # ).rsample().squeeze()
+        # service_time = pyro.sample(
+        #     var_name,
+        #     dist.Exponential(
+        #         1.0 / self.mean_service_time.reshape(-1)
+        #     ),
+        # ).squeeze() # TODO: why? some weird shape issue that randomly appears?
+        # # is there like something we have to do here when sampling?
+        service_time = dist.Exponential(
+            1.0 / self.mean_service_time.reshape(-1)
+        ).rsample().squeeze()
 
         # if service_time.size() != torch.Size([]):
         #     raise ValueError(service_time)
@@ -413,11 +413,14 @@ class Airport:
             flight: The flight to assign a turnaround time to.
             var_prefix: prefix for sampled variable names.
         """
-        turnaround_time = pyro.sample(
-            var_prefix + str(flight) + "_turnaround_time",
-            dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
-        )
-        # turnaround_time = dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev).rsample().squeeze()
+        # turnaround_time = pyro.sample(
+        #     var_prefix + str(flight) + "_turnaround_time",
+        #     dist.Normal(self.mean_turnaround_time, self.turnaround_time_std_dev),
+        # )
+        turnaround_time = dist.Normal(
+            self.mean_turnaround_time, 
+            self.turnaround_time_std_dev
+        ).rsample().squeeze()
         # print(flight.simulated_arrival_time, turnaround_time)
         # exit()
         self.turnaround_queue.append(flight.simulated_arrival_time + turnaround_time)

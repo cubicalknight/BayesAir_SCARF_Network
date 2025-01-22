@@ -275,6 +275,61 @@ class FlowEnsembleDistribution(torch.distributions.Distribution):
     def rsample(self, sample_shape=torch.Size()):
         """Sample from the distribution."""
         return self.rsample_and_log_prob(sample_shape)[0]
+    
+
+
+
+def _gamma_dist_from_shape_rate(shape, rate, device):
+    # std**2 = shape/rate**2
+    # mean = shape/rate
+    return dist.Gamma(
+        torch.tensor(shape, device=device),
+        torch.tensor(rate, device=device)
+    )
+
+def _gamma_dist_from_mean_std(mean, std, device):
+    # std**2 = shape/rate**2
+    # mean = shape/rate
+    shape = (mean/std)**2
+    rate = mean/std**2
+    return _gamma_dist_from_shape_rate(shape, rate, device)
+
+def _beta_dist_from_mean_std(mean, std, device):
+    # alpha = mean * std**2
+    # beta = (1-mean) * std**2
+    alpha = ((1 - mean) / (std**2) - 1 / mean) * (mean**2)
+    beta = alpha * (1 / mean - 1)
+    return _beta_dist_from_alpha_beta(alpha, beta, device)
+
+def _beta_dist_from_alpha_beta(alpha, beta, device):
+    return dist.Beta(
+        torch.tensor(alpha, device=device),
+        torch.tensor(beta, device=device)
+    )
+
+def _affine_beta_dist_from_alpha_beta(alpha, beta, lower, upper, device):
+    assert upper > lower
+    loc = lower
+    scale = upper - lower
+    return dist.AffineBeta(
+        torch.tensor(alpha, device=device),
+        torch.tensor(beta, device=device),
+        torch.tensor(loc, device=device),
+        torch.tensor(scale, device=device)
+    )
+
+def _affine_beta_dist_from_mean_std(mean, std, lower, upper, device):
+    assert lower < mean < upper
+    loc = lower
+    scale = (upper - lower)
+    mean = (mean - loc) / scale
+    std = std / scale
+    # alpha = mean * std**2
+    # beta = (1-mean) * std**2
+    alpha = ((1 - mean)/(std**2) - (1/mean)) * (mean**2)
+    beta = alpha * (1/mean - 1)
+    return _affine_beta_dist_from_alpha_beta(alpha, beta, lower, upper, device)
+
 
 
 if __name__ == "__main__":
