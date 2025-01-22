@@ -989,15 +989,19 @@ def train(
     prior_type,
     prior_scale,
     posterior_guide,
+    use_gpu=False
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if torch.cuda.is_available():
-        torch.set_default_device('cuda')
-        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    if use_gpu:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            torch.set_default_device('cuda')
+            torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    else:
+        device = torch.device("cpu")
 
     # Avoid plotting error
     matplotlib.use("Agg")
@@ -1133,7 +1137,7 @@ def train(
     group_name = f"{prior_type}-{prior_scale:.2f}-{posterior_guide}"
     # print(group_name)
     # TODO: fix this for non-day-by-day???
-    sub_dir = f"checkpoints_{'_'.join(network_airport_codes)}/{'_'.join(days.strftime('%Y-%m-%d').to_list())}/{prior_type}_{prior_scale:.2f}_{posterior_guide}/"
+    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{'_'.join(days.strftime('%Y-%m-%d').to_list())}/{prior_type}_{prior_scale:.2f}_{posterior_guide}/"
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
