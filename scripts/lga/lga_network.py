@@ -1305,8 +1305,8 @@ def train_cmd(
     # ] 
 
     default_zero_scale = 1e-12
-    default_low_scale = .1
-    default_high_scale = .02
+    default_low_scale = .02
+    default_high_scale = .1
 
     if prior_scale <= 0.0:
         prior_scale = default_zero_scale # can't actually be 0
