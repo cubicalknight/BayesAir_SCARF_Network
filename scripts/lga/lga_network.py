@@ -1027,18 +1027,18 @@ def train(
     # TODO: shifted gamma doesn't work. i have no idea why
     mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .010, .020, device)
     # mst_prior_nominal = _shifted_gamma_dist_from_mean_std(.0125, .001, .01, device)
-    s = mst_prior_nominal.sample((10000,))
+    s = mst_prior_nominal.sample((10000,)).detach().cpu()
     sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
 
     mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .010, .030, device)
     # mst_prior_failure = _shifted_gamma_dist_from_mean_std(.0200, .002, .01, device)
-    s = mst_prior_failure.sample((10000,))
+    s = mst_prior_failure.sample((10000,)).detach().cpu()
     sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
 
     plt.savefig('ab_test.png')
 
     mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .005, .030, device)
-    s = mst_prior_default.sample((10000,))
+    s = mst_prior_default.sample((10000,)).detach().cpu()
     sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
     
     plt.legend()
