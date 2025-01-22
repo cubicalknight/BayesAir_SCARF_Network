@@ -29,6 +29,8 @@ from scripts.utils import (
     _beta_dist_from_mean_std,
     _gamma_dist_from_mean_std,
     _gamma_dist_from_shape_rate,
+    _shifted_gamma_dist_from_mean_std,
+    _shifted_gamma_dist_from_shape_rate,
 )
 
 
@@ -991,35 +993,38 @@ def train(
 
     plt.figure()
 
-    # mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .005, .01, .03, device)
-    mst_prior_nominal = _gamma_dist_from_mean_std(.0125, .001, device)
+    # TODO: shifted gamma doesn't work. i have no idea why
+    mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .01, .02, device)
+    # mst_prior_nominal = _shifted_gamma_dist_from_mean_std(.0125, .001, .01, device)
     s = mst_prior_nominal.sample((10000,))
-    # plt.hist(s, bins=256, density=True, alpha=.5, color='b')
-    sns.kdeplot(s, color='b', alpha=.33, fill=True,)
+    sns.kdeplot(s, color='b', alpha=.33, fill=True, label="nominal")
 
-    # mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .003, .01, .03, device)
-    mst_prior_failure = _gamma_dist_from_mean_std(.0200, .002, device)
+    mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .01, .03, device)
+    # mst_prior_failure = _shifted_gamma_dist_from_mean_std(.0200, .002, .01, device)
     s = mst_prior_failure.sample((10000,))
-    # plt.hist(s, bins=256, density=True, alpha=.5, color='r')
-    sns.kdeplot(s, color='r', alpha=.33, fill=True,)
+    sns.kdeplot(s, color='r', alpha=.33, fill=True, label="failure")
 
     plt.savefig('ab_test.png')
 
     mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .01, .03, device)
     s = mst_prior_default.sample((10000,))
-    # plt.hist(s, bins=256, density=True, alpha=.5, color='r')
-    sns.kdeplot(s, color='purple', alpha=.33, fill=True,)
+    sns.kdeplot(s, color='purple', alpha=.33, fill=True, label="empty")
+
+    plt.legend()
+    plt.title("failures")
 
     plt.savefig('abc_test.png')
 
+    model_scale = 1.0 / (num_flights)
+    mst_prior_weight = .2 / model_scale
+    do_mle = False
     if nominal:
         mst_prior = mst_prior_nominal
-        do_mle = False
     elif failure:
         mst_prior = mst_prior_failure
-        do_mle = False
     else:
         mst_prior = mst_prior_default
+        mst_prior_weight = 1e-5 # basically zero lol
         do_mle = True
 
     # Re-scale the ELBO by the number of days
@@ -1040,37 +1045,42 @@ def train(
         mean_turnaround_time_effective_hrs=24,
 
         mst_prior=mst_prior,
+        mst_prior_weight=mst_prior_weight,
         do_mle=do_mle,
     )
     # model = pyro.poutine.scale(model, scale=1.0 / num_days)
     # also scale by total number of flights for day-by-day?
-    model = pyro.poutine.scale(model, scale=1.0 / (num_flights))
+
+    model = pyro.poutine.scale(model, scale=model_scale)
 
     # Create an autoguide for the model
-    guide = pyro.infer.autoguide.AutoDelta(model)
-    # guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
-    # guide = pyro.infer.autoguide.AutoLowRankMultivariateNormal(model)
+    init_loc_fn = pyro.infer.autoguide.initialization.init_to_value(
+        {'LGA_0_mean_service_time': torch.tensor(.015).to(device)},
+        fallback=pyro.infer.autoguide.initialization.init_to_median
+    )
+    # guide = pyro.infer.autoguide.AutoDelta(model)
+    guide = pyro.infer.autoguide.AutoMultivariateNormal(model, init_loc_fn=init_loc_fn)
 
     # Set up SVI
-    # gamma = 0.1  # final learning rate will be gamma * initial_lr
-    # lrd = gamma ** (1 / svi_steps)
-    # optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
+    gamma = 0.1  # final learning rate will be gamma * initial_lr
+    lrd = gamma ** (1 / svi_steps)
+    optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
     elbo = pyro.infer.Trace_ELBO(num_particles=1)
-    # svi = pyro.infer.SVI(model, auto_guide, optim, elbo)
+    svi = pyro.infer.SVI(model, guide, optim, elbo)
 
-    def loss_fn(model, guide):
-        # print(
-        #     elbo.differentiable_loss(model, guide, states, dt), 
-        # )
-        return (
-            elbo.differentiable_loss(model, guide, states, dt)
-        )
+    # def loss_fn(model, guide):
+    #     # print(
+    #     #     elbo.differentiable_loss(model, guide, states, dt), 
+    #     # )
+    #     return (
+    #         elbo.differentiable_loss(model, guide, states, dt)
+    #     )
     
-    with pyro.poutine.trace(param_only=True) as param_capture:
-        loss = loss_fn(model, guide)
+    # with pyro.poutine.trace(param_only=True) as param_capture:
+    #     loss = loss_fn(model, guide)
 
-    params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
-    optimizer = torch.optim.Adam(params, lr=svi_lr)
+    # params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
+    # optimizer = torch.optim.Adam(params, lr=svi_lr)
 
     run_name = f"[{','.join(network_airport_codes)}]_"
     run_name += f"{'nominal' if nominal else 'failure' if failure else 'empty'}_"
@@ -1092,23 +1102,27 @@ def train(
     )
 
     losses = []
+    losses_from_prior = []
 
     pbar = tqdm.tqdm(range(svi_steps))
     for i in pbar:
         # loss = svi.step(states, dt)
 
-        loss = loss_fn(model, guide)
-        loss.backward()
+        # loss = loss_fn(model, guide)
+        # loss.backward()
 
-        torch.nn.utils.clip_grad_norm_(params, 10.0)
-        optimizer.step()
-        optimizer.zero_grad()
+        # torch.nn.utils.clip_grad_norm_(params, 10.0)
+        # optimizer.step()
+        # optimizer.zero_grad()
 
         losses.append(loss)
 
         # pbar.set_description(f"ELBO loss: {loss:.2f}")
         # print(auto_guide.median(states, dt))
         # return
+        elbo_from_prior = (-mst_prior.log_prob(guide.median(states, dt)["LGA_0_mean_service_time"]).item() * mst_prior_weight)
+        losses_from_prior.append(elbo_from_prior)
+
         mst_mle = guide.median(states, dt)["LGA_0_mean_service_time"].item()
         pbar.set_description(f"ELBO loss: {loss:.2f}, MST MLE: {mst_mle:.6f}")
                 
@@ -1147,7 +1161,12 @@ def train(
             torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
         # wandb.log({"ELBO": loss})
-        wandb.log({"ELBO loss (nats per dim)": loss, "MST MLE (hours)": mst_mle}) # ?
+        wandb.log({
+            "ELBO/loss (nats per dim)": loss, 
+            "MST MLE (hours)": mst_mle, 
+            "ELBO/loss (prior component)": elbo_from_prior,
+            "ELBO/loss (non-prior component)": loss.item() - elbo_from_prior,
+        }) # ?
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 

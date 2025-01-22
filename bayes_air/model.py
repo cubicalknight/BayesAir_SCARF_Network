@@ -778,6 +778,7 @@ def augmented_air_traffic_network_model_simplified(
     max_waiting_time: float = None,
 
     mst_prior: dist.Distribution = None,
+    mst_prior_weight: float = 1.0,
 
     do_mle: bool = False
 ):
@@ -895,16 +896,17 @@ def augmented_air_traffic_network_model_simplified(
     else:
         mst_dist = mst_prior
 
-    airport_service_times = {
-        t_idx: {
-            code: pyro.sample(
-                f"{code}_{t_idx}_mean_service_time",
-                mst_dist.mask(not do_mle)
-            )
-            for code in network_airport_codes
+    with pyro.poutine.scale(scale=mst_prior_weight):
+        airport_service_times = {
+            t_idx: {
+                code: pyro.sample(
+                    f"{code}_{t_idx}_mean_service_time",
+                    mst_dist.mask(not do_mle)
+                )
+                for code in network_airport_codes
+            }
+            for t_idx in range(num_mean_service_time)
         }
-        for t_idx in range(num_mean_service_time)
-    }
 
     # with LGA only this is empty...
     network_travel_times = {}
