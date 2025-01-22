@@ -1130,6 +1130,8 @@ def train(
     # print(run_name)
     group_name = f"{prior_type}-{prior_scale:.2f}-{posterior_guide}"
     # print(group_name)
+    # TODO: fix this for non-day-by-day???
+    sub_dir = f"checkpoints_{'_'.join(network_airport_codes)}/{'_'.join(days.strftime('%Y-%m-%d').to_list())}/{prior_type}_{prior_scale:.2f}_{posterior_guide}/"
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
@@ -1206,7 +1208,8 @@ def train(
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
-            save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
+            # save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
+            save_path = os.path.join(dir_path, sub_dir, f"{i}")
             os.makedirs(save_path, exist_ok=True)
             pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
             torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
@@ -1238,7 +1241,8 @@ def train(
     # also maybe redundant but just in case i guess
 
     dir_path = os.path.dirname(__file__)
-    save_path = os.path.join(dir_path, "checkpoints_final", run_name, "final")
+    # save_path = os.path.join(dir_path, "checkpoints_final", run_name, "final")
+    save_path = os.path.join(dir_path, sub_dir, "final")
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "output_dict.pkl"), 'wb+') as handle:
         dill.dump(output_dict, handle)
@@ -1252,10 +1256,10 @@ def train(
 # @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=2e-3, help="Learning rate for SVI")
+@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
-@click.option("--gamma", default=.5) # was .1
+@click.option("--gamma", default=.4) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 
