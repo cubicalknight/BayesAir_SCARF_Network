@@ -1249,6 +1249,17 @@ def train(
     return loss
 
 
+from multiprocessing import Process
+# https://stackoverflow.com/questions/7207309/how-to-run-functions-in-parallel
+# trying something
+def run_cpu_tasks_in_parallel(tasks):
+    running_tasks = [Process(target=task) for task in tasks]
+    for running_task in running_tasks:
+        running_task.start()
+    for running_task in running_tasks:
+        running_task.join()
+
+
 # TODO: add functionality to pick days
 @click.command()
 @click.option("--project", default="bayes-air-atrds-attempt-2")
@@ -1351,10 +1362,13 @@ def train_cmd(
     pbar = tqdm(range(len(day_strs_list)))
     pbar.set_description('day')
     for i in pbar:
-        pppbar = tqdm(range(len(ppp_params)), leave=False)
-        pppbar.set_description('param combo')
-        for j in pppbar:
-            train(
+        # pppbar = tqdm(range(len(ppp_params)), leave=False)
+        # pppbar.set_description('param combo')
+        # for j in pppbar:
+        tasks = [
+            # train(
+            functools.partial(
+                train,
                 project,
                 network_airport_codes,
                 svi_steps,
@@ -1371,7 +1385,10 @@ def train_cmd(
                 # posterior_guide,
                 *(ppp_params[j])
             )
-            # print(day_strs_list[i], *(ppp_params[j]))
+            for j in range(len(ppp_params))
+        ]
+        run_cpu_tasks_in_parallel(tasks)
+        # print(day_strs_list[i], *(ppp_params[j]))
 
 
 if __name__ == "__main__":
