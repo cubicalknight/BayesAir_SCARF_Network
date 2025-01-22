@@ -234,7 +234,7 @@ def augmented_air_traffic_network_model(
     incoming_residual_delay_effective_hrs: int = 6,
     outgoing_residual_delay_effective_hrs: int = 6,
     effective_start_hr: int = 6,
-    effective_end_hr: int = 24,
+    effective_end_hr: int = 18,
 
     # if actual times are chosen, then these are ignored
     source_use_actual_nas_delay: bool = False,
@@ -913,12 +913,13 @@ def augmented_air_traffic_network_model_simplified(
 
     if include_cancellations:
         airport_initial_available_aircraft = {
-            code: torch.exp(
-                torch.tensor(
-                    initial_aircraft,
-                    device=device
-                ) # default i guess
-            )
+            # code: torch.exp(
+            #     torch.tensor(
+            #         log_initial_aircraft,
+            #         device=device
+            #     ) # default i guess
+            # )
+            code: torch.tensor(initial_aircraft, device=device)
             for code in network_airport_codes
         }
         airport_base_cancel_prob = {

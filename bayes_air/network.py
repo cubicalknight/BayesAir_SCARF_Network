@@ -95,7 +95,7 @@ class NetworkState:
             cancellation_probability = 1 - (
                 1 - base_cancel_prob
             ) * torch.nn.functional.sigmoid(
-                10 * (num_available_aircraft / num_flights_to_depart - 3.0)
+                10 * (num_available_aircraft / num_flights_to_depart -.25)
             )
             # This gross sigmoid is a smooth approximation of this:
             # cancellation_probability = 1 - torch.maximum(
@@ -122,6 +122,7 @@ class NetworkState:
                         ),
                         obs=flight.actually_cancelled 
                         if not self.obs_none else None
+                        # obs=None
                     )
 
                 if flight.simulated_cancelled == 0:
@@ -142,7 +143,7 @@ class NetworkState:
                         )
                 else:
                     # also just give a zero sample so predictive doesn't error??
-                    # self._assign_times_cancel(flight, var_prefix)
+                    self._assign_times_cancel(flight, var_prefix)
 
                     # dummy queue entry to match the function requirements, not used
                     # airport._assign_cancellation(QueueEntry(flight, 0.0), var_prefix)
@@ -155,24 +156,32 @@ class NetworkState:
 
         return ready_to_depart_flights, ready_times
     
-    # def _assign_times_cancel(
-    #     self,
-    #     flight: Flight,
-    #     var_prefix: str = "",
-    # ):
+    def _assign_times_cancel(
+        self,
+        flight: Flight,
+        var_prefix: str = "",
+    ):
 
-    #     default_device = flight.scheduled_departure_time.device
-    #     def _zero_sample(suffix, device=default_device):
-    #         pyro.deterministic(
-    #             var_prefix + str(flight) + suffix,
-    #             Time(0.0).to(device)
-    #         )
+        default_device = flight.scheduled_departure_time.device
+        def _zero_sample(suffix, device=default_device):
+            if not self.obs_none:
+                pyro.deterministic(
+                    var_prefix + str(flight) + suffix,
+                    Time(0.0).to(device)
+                )
+            else:
+                pyro.sample(
+                    var_prefix + str(flight) + suffix,
+                    dist.Delta(Time(0.0).to(device)),
+                    obs=None
+                )
+            # print(var_prefix + str(flight) + suffix)
             
-    #     _zero_sample("_simulated_departure_time")
-    #     _zero_sample("_departure_service_time")
-    #     # if not flight.is_outgoing_flight:
-    #     #     _zero_sample("_simulated_arrival_time")
-    #     #     _zero_sample("_arrival_service_time")
+        _zero_sample("_simulated_departure_time")
+        # _zero_sample("_departure_service_time")
+        # if not flight.is_outgoing_flight:
+        #     _zero_sample("_simulated_arrival_time")
+        #     _zero_sample("_arrival_service_time")
 
     def add_in_transit_flights(
         self,
@@ -197,12 +206,16 @@ class NetworkState:
             # Sample a travel time
             nominal_travel_time = travel_times[flight.origin, flight.destination]
             var_name = var_prefix + str(flight) + "_travel_time"
-            travel_time = pyro.sample(
-                var_name,
+            # travel_time = pyro.sample(
+            #     var_name,
+            #     dist.Normal(
+            #         nominal_travel_time, nominal_travel_time * travel_time_variation
+            #     ),
+            # )
+            travel_time = \
                 dist.Normal(
                     nominal_travel_time, nominal_travel_time * travel_time_variation
-                ),
-            )
+                ).rsample()
 
             # Add the flight to the in-transit flights list
             self.in_transit_flights.append(

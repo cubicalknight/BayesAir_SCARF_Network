@@ -10,7 +10,6 @@ import numpy as np
 import pyro
 import seaborn as sns
 import torch
-import tqdm
 from math import ceil, floor
 import functools
 import dill
@@ -20,6 +19,8 @@ import wandb
 from bayes_air.model import augmented_air_traffic_network_model_simplified
 from bayes_air.network import NetworkState, AugmentedNetworkState
 from bayes_air.schedule import split_and_parse_full_schedule
+
+from tqdm import tqdm
 
 import pyro.distributions as dist
 from scripts.utils import (
@@ -158,9 +159,15 @@ def plot_time_indexed_network_var(
         auto_guide, states, dt, n_samples,
         transform=(lambda x: x),
         plots_per_row=3,
-        width=12,
+        width=None,
         ignore_time_index=False,
+        xlim=None,
+        ylim=None,
     ):
+
+    if width is None:
+        default_height = 5
+        width = plots_per_row * default_height
 
     # Sample mean service time estimates from the posterior
     with pyro.plate("samples", n_samples, dim=-1):
@@ -214,24 +221,28 @@ def plot_time_indexed_network_var(
             
             ax = axs[f"{plot_idx}"]
 
-            # sns.histplot(
-            #     x=prefix,
-            #     hue="type",
-            #     ax=ax,
-            #     data=plotting_df,
-            #     color="blue",
-            #     kde=True,
-            # )
+            sns.histplot(
+                x=prefix,
+                hue="type",
+                ax=ax,
+                data=plotting_df,
+                color="blue",
+                kde=True,
+                edgecolor='k',
+                linewidth=0,
+                bins=ceil(np.sqrt(n_samples)),
+                # binwidth=.0001 # this is bit of a hack
+            )
             mle = plotting_df[prefix].mean()
-            ax.axvline(mle)
-            plt.title(f'{name} mle: {mle}')
+            ax.axvline(mle,linestyle=":")
+            ax.title.set_text(f'{name} mle = {mle:.5f}')
 
             shared_axs.append(ax)
             
             if ignore_time_index:
                 break
 
-        handle_shared_ax_lims(shared_axs)
+        handle_shared_ax_lims(shared_axs, xlim, ylim)
 
     return fig
 
@@ -240,6 +251,7 @@ plot_service_times = functools.partial(
     plot_time_indexed_network_var,
     "mean_service_time",
     plots_per_row=1,
+    xlim=(.005, .030) # new
 )
 
 plot_turnaround_times = functools.partial(
@@ -627,6 +639,17 @@ def get_hourly_delays(
         obs_none=True,
     )
 
+    # conditioning_dict = {
+    #     'LGA_0_mean_service_time': posterior_samples['LGA_0_mean_service_time']
+    # }
+
+    # model_trace = pyro.poutine.trace(
+    #     pyro.poutine.condition(model, data=conditioning_dict)
+    # ).get_trace(
+    #     states=states,
+    #     delta_t=dt,
+    # )
+
     # trace_pred = pyro.infer.TracePredictive(
     #     model, svi, num_samples=n_samples
     # ).run(states, dt)
@@ -833,7 +856,7 @@ def get_hourly_delays(
 
 def plot_hourly_delays(df):
 
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(16, 8))
 
     plt.plot(df.index, df.sample_arrival_delay, ":b", label="sample arrival")
     plt.plot(df.index, df.sample_departure_delay, ":r", label="sample departure")
@@ -846,7 +869,7 @@ def plot_hourly_delays(df):
     plt.legend()
 
     plt.xlim(4.0,26.0)
-    plt.ylim(-.5, 4.0)
+    plt.ylim(-.5, 5.0)
 
     return fig
 
@@ -949,8 +972,6 @@ def make_states(data, network_airport_codes):
 
     return states
 
-
-
 # TODO: deal with all of the above
 
 def train(
@@ -958,14 +979,18 @@ def train(
     svi_steps, 
     n_samples, 
     svi_lr, 
+    gamma,
+    dt,
     plot_every,
-    nominal,
-    failure,
+    rng_seed,
     day_strs,
+    prior_type,
+    prior_scale,
+    posterior_guide,
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
-    pyro.set_rng_seed(1)
+    pyro.set_rng_seed(int(rng_seed))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -973,164 +998,191 @@ def train(
     matplotlib.use("Agg")
 
     # Hyperparameters
-    dt = 0.1 # .2
-    starting_aircraft = 10
+    initial_aircraft = 50.0 # not used!
+    mst_effective_hrs = 24 # not used!
+    mst_split = 1 # not really used
+    mst_prior_scale = prior_scale # .1 # 1.0 = scaled to be as much as rest of the model?
 
+    # gather data
     days = pd.to_datetime(day_strs)
-    num_days = len(days)
-
     data = ba_dataloader.load_remapped_data_bts(days)
 
+    num_days = len(days)
     num_flights = sum([len(df) for df in data.values()])
+    print(f"Number of days: {num_days}")
     print(f"Number of flights: {num_flights}")
 
+    # make things with the data
     travel_times_dict, observations_df = \
         make_travel_times_dict_and_observation_df(
             data, network_airport_codes
         ) 
-
     states = make_states(data, network_airport_codes)
 
-    plt.figure()
+
+    # here, we make the nominal, failure, and uniform (not used) priors...
+    fig = plt.figure()
 
     # TODO: shifted gamma doesn't work. i have no idea why
-    mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .01, .02, device)
+    mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .010, .020, device)
     # mst_prior_nominal = _shifted_gamma_dist_from_mean_std(.0125, .001, .01, device)
     s = mst_prior_nominal.sample((10000,))
-    sns.kdeplot(s, color='b', alpha=.33, fill=True, label="nominal")
+    sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
 
-    mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .01, .03, device)
+    mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .010, .030, device)
     # mst_prior_failure = _shifted_gamma_dist_from_mean_std(.0200, .002, .01, device)
     s = mst_prior_failure.sample((10000,))
-    sns.kdeplot(s, color='r', alpha=.33, fill=True, label="failure")
+    sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
 
     plt.savefig('ab_test.png')
 
-    mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .01, .03, device)
+    mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .005, .030, device)
     s = mst_prior_default.sample((10000,))
-    sns.kdeplot(s, color='purple', alpha=.33, fill=True, label="empty")
-
+    sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    
     plt.legend()
-    plt.title("failures")
-
+    plt.title("prior distributions example")
     plt.savefig('abc_test.png')
+    plt.close(fig)
+    # return
 
+
+    # by default, scale ELBO down by num flights
     model_scale = 1.0 / (num_flights)
-    mst_prior_weight = .2 / model_scale
-    do_mle = False
-    if nominal:
-        mst_prior = mst_prior_nominal
-    elif failure:
-        mst_prior = mst_prior_failure
-    else:
-        mst_prior = mst_prior_default
-        mst_prior_weight = 1e-5 # basically zero lol
-        do_mle = True
+    mst_prior_weight = mst_prior_scale / model_scale # equals mst_prior_scale * num_flights ?
 
-    # Re-scale the ELBO by the number of days
+    do_mle = False
+    if prior_type == "nominal":
+        mst_prior = mst_prior_nominal
+    elif prior_type == "failure":
+        mst_prior = mst_prior_failure
+    elif prior_type == "empty":
+        mst_prior = mst_prior_default
+        # mst_prior_weight = 1e-12 # basically zero lol
+        do_mle = True
+    else:
+        raise ValueError 
+
+
+    # set up common model arguments
     model = functools.partial(
         augmented_air_traffic_network_model_simplified,
 
         travel_times_dict=travel_times_dict,
-        initial_aircraft=starting_aircraft,
+        initial_aircraft=initial_aircraft,
 
-        include_cancellations=False,#True,
+        # include_cancellations=True,
+        include_cancellations=False,
+        mean_service_time_effective_hrs=mst_effective_hrs,
 
         source_use_actual_departure_time=True,
         # source_use_actual_late_aircraft_delay=True,
         # source_use_actual_carrier_delay=True,
         # source_use_actual_security_delay=True,
 
-        mean_service_time_effective_hrs=24,
-        mean_turnaround_time_effective_hrs=24,
+        # source_use_actual_cancelled=True,
+        source_use_actual_cancelled=False,
 
         mst_prior=mst_prior,
         mst_prior_weight=mst_prior_weight,
         do_mle=do_mle,
     )
-    # model = pyro.poutine.scale(model, scale=1.0 / num_days)
-    # also scale by total number of flights for day-by-day?
 
+    # re-scale ELBO
     model = pyro.poutine.scale(model, scale=model_scale)
+
 
     # Create an autoguide for the model
     init_loc_fn = pyro.infer.autoguide.initialization.init_to_value(
-        {'LGA_0_mean_service_time': torch.tensor(.015).to(device)},
+        values={
+            f'LGA_{t_idx}_mean_service_time': torch.tensor(.015).to(device)
+            for t_idx in range(3)
+        },
         fallback=pyro.infer.autoguide.initialization.init_to_median
     )
-    # guide = pyro.infer.autoguide.AutoDelta(model)
-    guide = pyro.infer.autoguide.AutoMultivariateNormal(model, init_loc_fn=init_loc_fn)
+
+    if posterior_guide == "gaussian":
+        guide = pyro.infer.autoguide.AutoMultivariateNormal(model, init_loc_fn=init_loc_fn)
+    elif posterior_guide == "iafnormal":
+        guide = pyro.infer.autoguide.AutoIAFNormal(
+            model, num_transforms=3, hidden_dim=[3,3]
+        )
+    elif posterior_guide == "delta":
+        guide = pyro.infer.autoguide.AutoDelta(model, init_loc_fn=init_loc_fn)
+    elif posterior_guide == "laplace":
+        guide = pyro.infer.autoguide.AutoLaplaceApproximation(model, init_loc_fn=init_loc_fn)
+    else:
+        raise ValueError
+    # print(guide(states, dt))
+
 
     # Set up SVI
-    gamma = 0.1  # final learning rate will be gamma * initial_lr
+    gamma = gamma  # final learning rate will be gamma * initial_lr
     lrd = gamma ** (1 / svi_steps)
     optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
     elbo = pyro.infer.Trace_ELBO(num_particles=1)
     svi = pyro.infer.SVI(model, guide, optim, elbo)
 
-    # def loss_fn(model, guide):
-    #     # print(
-    #     #     elbo.differentiable_loss(model, guide, states, dt), 
-    #     # )
-    #     return (
-    #         elbo.differentiable_loss(model, guide, states, dt)
-    #     )
-    
-    # with pyro.poutine.trace(param_only=True) as param_capture:
-    #     loss = loss_fn(model, guide)
-
-    # params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
-    # optimizer = torch.optim.Adam(params, lr=svi_lr)
-
     run_name = f"[{','.join(network_airport_codes)}]_"
-    run_name += f"{'nominal' if nominal else 'failure' if failure else 'empty'}_"
+    run_name += f"[{prior_type},{prior_scale:.2f},{posterior_guide}]_"
     run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
+    # print(run_name)
+    group_name = f"{prior_type}-{prior_scale:.2f}-{posterior_guide}"
+    # print(group_name)
+
+    wandb_init_config_dict = {
+        # "starting_aircraft": starting_aircraft,
+        "days": days,
+        "num_flights": num_flights,
+        "num_days": num_days,
+
+        "dt": dt,
+        "svi_lr": svi_lr,
+        "svi_steps": svi_steps,
+        "gamma": gamma,
+        "n_samples": n_samples,
+        "do_mle": do_mle,
+
+        "prior_type": prior_type,
+        "prior_scale": prior_scale,
+        "posterior_guide": posterior_guide,
+    }
     
     wandb.init(
-        project="bayes-air_july-2019_test-2",
+        project="bayes-air-atrds-attempt-1",
         name=run_name,
-        group="nominal" if nominal else "failure",
-        config={
-            "type": "nominal" if nominal else "failure",
-            # "starting_aircraft": starting_aircraft,
-            "dt": dt,
-            "days": days,
-            "svi_lr": svi_lr,
-            "svi_steps": svi_steps,
-            "n_samples": n_samples,
-        },
+        group=group_name,
+        config=wandb_init_config_dict,
     )
 
     losses = []
     losses_from_prior = []
 
-    pbar = tqdm.tqdm(range(svi_steps))
+    pbar = tqdm(range(svi_steps))
     for i in pbar:
-        # loss = svi.step(states, dt)
-
-        # loss = loss_fn(model, guide)
-        # loss.backward()
-
-        # torch.nn.utils.clip_grad_norm_(params, 10.0)
-        # optimizer.step()
-        # optimizer.zero_grad()
-
+        loss = svi.step(states, dt)
         losses.append(loss)
 
-        # pbar.set_description(f"ELBO loss: {loss:.2f}")
-        # print(auto_guide.median(states, dt))
-        # return
-        elbo_from_prior = (-mst_prior.log_prob(guide.median(states, dt)["LGA_0_mean_service_time"]).item() * mst_prior_weight)
+        with pyro.plate("samples", n_samples, dim=-1):
+            posterior_samples = guide(states, dt)
+        z_samples = [posterior_samples[f'LGA_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
+        mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
+
+        elbo_from_prior = (
+            sum([
+                -mst_prior.log_prob(z_sample)
+                .mean().item() 
+                for z_sample in z_samples
+            ]) #/ len(z_samples)
+            * mst_prior_weight
+        )
         losses_from_prior.append(elbo_from_prior)
 
-        mst_mle = guide.median(states, dt)["LGA_0_mean_service_time"].item()
-        pbar.set_description(f"ELBO loss: {loss:.2f}, MST MLE: {mst_mle:.6f}")
+        desc = f"ELBO loss: {loss:.2f}, mst mles: "
+        desc += ", ".join([f'{mst_mle:.5f}' for mst_mle in mst_mles])
+        pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
-
-            # fig = plot_elbo_losses(losses)
-            # wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
 
             hourly_delays = get_hourly_delays(
                 model, guide, states, dt, observations_df, 1
@@ -1140,11 +1192,8 @@ def train(
             wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-
             plotting_dict = {
                 "mean service times": plot_service_times,
-                # "mean turnaround_times": plot_turnaround_times,
-                # "baseline cancel probability": plot_base_cancel_prob,
             }
         
             for name, plot_func in plotting_dict.items():
@@ -1155,18 +1204,20 @@ def train(
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
-            save_path = os.path.join(dir_path, "checkpoints", run_name, f"{i}")
+            save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
             os.makedirs(save_path, exist_ok=True)
             pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
             torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
         # wandb.log({"ELBO": loss})
-        wandb.log({
-            "ELBO/loss (nats per dim)": loss, 
-            "MST MLE (hours)": mst_mle, 
-            "ELBO/loss (prior component)": elbo_from_prior,
-            "ELBO/loss (non-prior component)": loss.item() - elbo_from_prior,
-        }) # ?
+        log_dict = {
+            "ELBO/loss (units = nats per dim)": loss, 
+            "ELBO/loss (from prior component)": elbo_from_prior,
+            "ELBO/loss (from other component)": loss - elbo_from_prior,
+        }
+        for i in range(len(mst_mles)):
+            log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
+        wandb.log(log_dict)
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 
@@ -1175,12 +1226,17 @@ def train(
         'guide': guide,
         'states': states,
         'dt': dt,
+        # 'set_model': functools.partial(model, states, dt),
+        # 'set_guide': functools.partial(guide, states, dt),
+        'run_name': run_name,
+        'group_name': group_name,
+        'config': wandb_init_config_dict
     }
     # TODO: this is like not the best way of handling it but whatever
     # also maybe redundant but just in case i guess
 
     dir_path = os.path.dirname(__file__)
-    save_path = os.path.join(dir_path, "checkpoints", run_name, "final")
+    save_path = os.path.join(dir_path, "checkpoints_final", run_name, "final")
     os.makedirs(save_path, exist_ok=True)
     with open(os.path.join(save_path, "output_dict.pkl"), 'wb+') as handle:
         dill.dump(output_dict, handle)
@@ -1192,19 +1248,40 @@ def train(
 @click.command()
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 # @click.option("--failure", is_flag=True, help="Use failure prior")
-@click.option("--svi-steps", default=200, help="Number of SVI steps to run")
-@click.option("--n-samples", default=800, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
+@click.option("--svi-steps", default=500, help="Number of SVI steps to run")
+@click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
+@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
-# # @click.option("--day", default=1, help="day")
-@click.option("--nominal", is_flag=True)
-@click.option("--failure", is_flag=True)
-# @click.option("--days", default=1, help="day")
-@click.option("--day-strs", default='2019-07-01')
+@click.option("--rng-seed", default=1, type=int)
+@click.option("--gamma", default=.1)
+@click.option("--dt", default=.1)
+
+
+@click.option("--prior-type", default="empty", help="nominal/failure/empty")
+@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace")
+@click.option("--prior-scale", default=0.0, type=float)
+# empty: 2 (each guide)
+# nominal: 4 (each guide, two scale levels)
+# failure: 4 (each guide, two scale levels)
+# for scale levels, let's try .1 and .25 first maybe?
+
+@click.option("--day-strs", default=None)
+@click.option("--year", default=None)
+@click.option("--month", default=None)
+@click.option("--start-day", default=None)
+@click.option("--end-day", default=None)
+
+@click.option("--learn-together", is_flag=True)
+@click.option("--all-combos", is_flag=True)
+
 
 
 def train_cmd(
-    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, nominal, failure, day_strs
+    network_airport_codes, svi_steps, n_samples, svi_lr, 
+    plot_every, rng_seed, gamma, dt,
+    prior_type, prior_scale, posterior_guide, 
+    day_strs, year, month, start_day, end_day,
+    learn_together, all_combos,
 ):
     # TODO: make this better
 
@@ -1219,19 +1296,70 @@ def train_cmd(
     #     if d not in nominal_days
     # ] 
 
-    network_airport_codes = network_airport_codes.split(',')
-    day_strs = day_strs.split(',')
+    default_zero_scale = 1e-12
+    default_low_scale = .1
+    default_high_scale = .02
 
-    train(
-        network_airport_codes,
-        svi_steps,
-        n_samples,
-        svi_lr,
-        plot_every,
-        nominal,
-        failure,
-        day_strs
-    )
+    if prior_scale <= 0.0:
+        prior_scale = default_zero_scale # can't actually be 0
+        if prior_type != "empty":
+            print("warning: zero prior_scale being used with non-empty prior type")
+
+    network_airport_codes = network_airport_codes.split(',')
+    if day_strs is not None:
+        day_strs = day_strs.split(',')
+    elif year is not None and month is not None:
+        start_day = f'{year}-{month}-1'
+        days_in_month = pd.Period(start_day).days_in_month
+        end_day = f'{year}-{month}-{days_in_month}'
+        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
+    elif start_day is not None and end_day is not None:
+        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
+    else:
+        raise ValueError
+    
+    if learn_together:
+        day_strs_list = [day_strs]
+    else:
+        day_strs_list = [
+            [day_str] for day_str in day_strs
+        ]
+
+    if not all_combos:
+        ppp_params = [(prior_type, prior_scale, posterior_guide,)]
+    else:
+        ppp_params = [
+            (ptype, pscale, pguide)
+            for ptype in ("failure", "nominal")
+            for pscale in (default_low_scale, default_high_scale)
+            for pguide in ("gaussian", "iafnormal")
+        ] + [
+            ("empty", default_zero_scale, pguide)
+            for pguide in ("gaussian", "iafnormal")
+        ]
+
+    pbar = tqdm(range(len(day_strs_list)))
+    pbar.set_description('day')
+    for i in pbar:
+        pppbar = tqdm(range(len(ppp_params)), leave=False)
+        pppbar.set_description('param combo')
+        for j in pppbar:
+            train(
+                network_airport_codes,
+                svi_steps,
+                n_samples,
+                svi_lr,
+                gamma,
+                dt,
+                plot_every,
+                rng_seed,
+                day_strs_list[i],
+                # prior_type,
+                # prior_scale,
+                # posterior_guide,
+                *(ppp_params[j])
+            )
+            # print(day_strs_list[i], *(ppp_params[j]))
 
 
 if __name__ == "__main__":
