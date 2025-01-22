@@ -294,6 +294,23 @@ def _gamma_dist_from_mean_std(mean, std, device):
     rate = mean/std**2
     return _gamma_dist_from_shape_rate(shape, rate, device)
 
+def _shifted_gamma_dist_from_shape_rate(shape, rate, loc, device):
+    transforms = [dist.transforms.AffineTransform(loc, 1.0)]
+    return dist.TransformedDistribution(
+        _gamma_dist_from_shape_rate(shape, rate, device), 
+        transforms,
+    )
+
+def _shifted_gamma_dist_from_mean_std(mean, std, loc, device):
+    assert mean > loc
+    mean = mean - loc
+    transforms = [dist.transforms.AffineTransform(loc, 1.0)]
+    return dist.TransformedDistribution(
+        _gamma_dist_from_mean_std(mean, std, device), 
+        transforms,
+    )
+
+
 def _beta_dist_from_mean_std(mean, std, device):
     # alpha = mean * std**2
     # beta = (1-mean) * std**2
