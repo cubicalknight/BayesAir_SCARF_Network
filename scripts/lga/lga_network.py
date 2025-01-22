@@ -975,6 +975,7 @@ def make_states(data, network_airport_codes):
 # TODO: deal with all of the above
 
 def train(
+    project,
     network_airport_codes, 
     svi_steps, 
     n_samples, 
@@ -1151,7 +1152,7 @@ def train(
     }
     
     wandb.init(
-        project="bayes-air-atrds-attempt-1",
+        project=project,
         name=run_name,
         group=group_name,
         config=wandb_init_config_dict,
@@ -1250,6 +1251,7 @@ def train(
 
 # TODO: add functionality to pick days
 @click.command()
+@click.option("--project", default="bayes-air-attempt-2")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 # @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -1283,7 +1285,8 @@ def train(
 
 
 def train_cmd(
-    network_airport_codes, svi_steps, n_samples, svi_lr, 
+    project, network_airport_codes, 
+    svi_steps, n_samples, svi_lr, 
     plot_every, rng_seed, gamma, dt, n_elbo_particles,
     prior_type, prior_scale, posterior_guide, 
     day_strs, year, month, start_day, end_day,
@@ -1353,6 +1356,7 @@ def train_cmd(
         pppbar.set_description('param combo')
         for j in pppbar:
             train(
+                project,
                 network_airport_codes,
                 svi_steps,
                 n_samples,
