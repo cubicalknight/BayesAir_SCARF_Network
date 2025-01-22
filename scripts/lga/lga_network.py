@@ -981,6 +981,7 @@ def train(
     svi_lr, 
     gamma,
     dt,
+    n_elbo_particles,
     plot_every,
     rng_seed,
     day_strs,
@@ -1120,7 +1121,7 @@ def train(
     gamma = gamma  # final learning rate will be gamma * initial_lr
     lrd = gamma ** (1 / svi_steps)
     optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
-    elbo = pyro.infer.Trace_ELBO(num_particles=1)
+    elbo = pyro.infer.Trace_ELBO(num_particles=n_elbo_particles)
     svi = pyro.infer.SVI(model, guide, optim, elbo)
 
     run_name = f"[{','.join(network_airport_codes)}]_"
@@ -1142,6 +1143,7 @@ def train(
         "gamma": gamma,
         "n_samples": n_samples,
         "do_mle": do_mle,
+        "n_elbo_particles": n_elbo_particles,
 
         "prior_type": prior_type,
         "prior_scale": prior_scale,
@@ -1250,15 +1252,17 @@ def train(
 # @click.option("--failure", is_flag=True, help="Use failure prior")
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
+@click.option("--svi-lr", default=2e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
-@click.option("--gamma", default=.1)
+@click.option("--gamma", default=.5) # was .1
 @click.option("--dt", default=.1)
+@click.option("--n-elbo-particles", default=1)
+
 
 
 @click.option("--prior-type", default="empty", help="nominal/failure/empty")
-@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace")
+@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace") # delta and laplace break plots rn 
 @click.option("--prior-scale", default=0.0, type=float)
 # empty: 2 (each guide)
 # nominal: 4 (each guide, two scale levels)
@@ -1278,7 +1282,7 @@ def train(
 
 def train_cmd(
     network_airport_codes, svi_steps, n_samples, svi_lr, 
-    plot_every, rng_seed, gamma, dt,
+    plot_every, rng_seed, gamma, dt, n_elbo_particles,
     prior_type, prior_scale, posterior_guide, 
     day_strs, year, month, start_day, end_day,
     learn_together, all_combos,
@@ -1313,7 +1317,9 @@ def train_cmd(
         days_in_month = pd.Period(start_day).days_in_month
         end_day = f'{year}-{month}-{days_in_month}'
         day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
-    elif start_day is not None and end_day is not None:
+    elif start_day is not None:
+        if end_day is None:
+            end_day = start_day
         day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
     else:
         raise ValueError
@@ -1351,6 +1357,7 @@ def train_cmd(
                 svi_lr,
                 gamma,
                 dt,
+                n_elbo_particles,
                 plot_every,
                 rng_seed,
                 day_strs_list[i],
