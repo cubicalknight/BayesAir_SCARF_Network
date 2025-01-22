@@ -165,6 +165,7 @@ cython_debug/
 wandb/
 checkpoints/
 checkpoints_final/
+checkpoints_*/
 
 data/bts_*/*_yearly/*
 !data/bts_remapped/*_yearly/parquet
