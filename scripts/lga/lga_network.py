@@ -17,9 +17,19 @@ import dill
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
-from bayes_air.model import augmented_air_traffic_network_model
+from bayes_air.model import augmented_air_traffic_network_model_simplified
 from bayes_air.network import NetworkState, AugmentedNetworkState
 from bayes_air.schedule import split_and_parse_full_schedule
+
+import pyro.distributions as dist
+from scripts.utils import (
+    _affine_beta_dist_from_alpha_beta,
+    _affine_beta_dist_from_mean_std,
+    _beta_dist_from_alpha_beta,
+    _beta_dist_from_mean_std,
+    _gamma_dist_from_mean_std,
+    _gamma_dist_from_shape_rate,
+)
 
 
 def plot_travel_times(
@@ -595,6 +605,230 @@ def get_arrival_departures_rmses(
     )
 
 
+
+
+def get_hourly_delays(
+    model, auto_guide, states, dt, 
+    observations_df, n_samples, wandb=True
+):
+    
+    with pyro.plate("samples", n_samples, dim=-1):
+        posterior_samples = auto_guide(states, dt)
+
+    predictive = pyro.infer.Predictive(
+        model=model,
+        posterior_samples=posterior_samples,
+    )
+
+    samples = predictive(
+        states, dt, 
+        obs_none=True,
+    )
+
+    # trace_pred = pyro.infer.TracePredictive(
+    #     model, svi, num_samples=n_samples
+    # ).run(states, dt)
+    
+    # samples = trace_pred()
+
+    # print(samples)
+
+    day_str_list = []
+    flight_number_list = []
+    origin_airport_list = []
+    destination_airport_list = []
+    sample_arrival_time_list = []
+    sample_departure_time_list = []
+    sample_cancelled_list = []
+
+    for key, sample in samples.items():
+        split_key = key.split('_')
+        if split_key[-1] != 'time' and split_key[-1] != 'cancelled':
+            continue
+
+        arr_sample = None
+        dep_sample = None
+        # ccl_sample = None
+
+        if split_key[-1] == 'cancelled':
+            # ccl_sample = sample.mean().item() # each 1 or 0
+            continue
+        elif split_key[-2] == 'arrival':
+            arr_sample = sample.mean().item()
+        elif split_key[-2] == 'departure':
+            dep_sample = sample.mean().item()
+        else:
+            continue
+
+        # print(split_key, sample)
+
+        day_str_list.append(split_key[0])
+        flight_number_list.append(
+            split_key[1]
+            # f'{split_key[1]}_{split_key[2]}_{split_key[3]}'
+        )
+        origin_airport_list.append(split_key[2])
+        destination_airport_list.append(split_key[3])
+        sample_arrival_time_list.append(arr_sample)
+        sample_departure_time_list.append(dep_sample)
+        # sample_cancelled_list.append(ccl_sample)
+
+    samples_df = pd.DataFrame(
+        {   
+            "date": pd.to_datetime(day_str_list),
+            "flight_number": flight_number_list,
+            "origin_airport": origin_airport_list,
+            "destination_airport": destination_airport_list,
+            "sample_arrival_time": sample_arrival_time_list,
+            "sample_departure_time": sample_departure_time_list,
+            # "sample_cancelled": sample_cancelled_list,
+        }
+    )
+
+    # print(samples_df)
+    # print(observations_df)
+
+    merged_df = pd.merge(
+        samples_df, 
+        observations_df,
+        on=[
+            "date",
+            "flight_number",
+            "origin_airport",
+            "destination_airport"
+        ],
+        how='inner',
+    )
+
+    dep_mask_successful = (
+        (merged_df["origin_airport"] == "LGA")
+        & (merged_df["actual_departure_time"] != 0)
+        & (merged_df["sample_departure_time"] != 0)
+    )
+    arr_mask_successful = (
+        (merged_df["destination_airport"] == "LGA")
+        & (merged_df["actual_arrival_time"] != 0)
+        & (merged_df["sample_arrival_time"] != 0)
+    )
+
+    hr_lim = 25
+
+    arrival_delays_df = merged_df.loc[
+        arr_mask_successful,
+        ["date", "flight_number",
+         "sample_arrival_time", 
+         "actual_arrival_time",
+         "scheduled_arrival_time"]
+    ]
+
+    arrival_delays_df["sample_arrival_delay"] = (
+        arrival_delays_df["sample_arrival_time"] 
+        - arrival_delays_df["scheduled_arrival_time"]
+    )
+    arrival_delays_df["actual_arrival_delay"] = (
+        arrival_delays_df["actual_arrival_time"] 
+        - arrival_delays_df["scheduled_arrival_time"]
+    )
+
+    actual_arrival_hour = (
+        np.floor(arrival_delays_df.actual_arrival_time).astype(int)
+    )
+    sample_arrival_hour = (
+        np.floor(arrival_delays_df.sample_arrival_time).astype(int)
+    )
+
+    hourly_sample_arrival_delay = (
+        arrival_delays_df
+        .groupby(sample_arrival_hour)
+        ["sample_arrival_delay"]
+        .mean()
+        .loc[:hr_lim]
+    )
+    hourly_actual_arrival_delay = (
+        arrival_delays_df
+        .groupby(actual_arrival_hour)
+        ["actual_arrival_delay"]
+        .mean()
+        .loc[:hr_lim]
+    )
+
+    departure_delays_df = merged_df.loc[
+        dep_mask_successful,
+        ["date", "flight_number",
+         "sample_departure_time", 
+         "actual_departure_time",
+         "scheduled_departure_time"]
+    ]
+
+    departure_delays_df["sample_departure_delay"] = (
+        departure_delays_df["sample_departure_time"] 
+        - departure_delays_df["scheduled_departure_time"]
+    )
+    departure_delays_df["actual_departure_delay"] = (
+        departure_delays_df["actual_departure_time"] 
+        - departure_delays_df["scheduled_departure_time"]
+    )
+
+    actual_departure_hour = (
+        np.floor(departure_delays_df.actual_departure_time).astype(int)
+    )
+    sample_departure_hour = (
+        np.floor(departure_delays_df.sample_departure_time).astype(int)
+    )
+
+    hourly_sample_departure_delay = (
+        departure_delays_df
+        .groupby(sample_departure_hour)
+        ["sample_departure_delay"]
+        .mean()
+        .loc[:hr_lim]
+    )
+    hourly_actual_departure_delay = (
+        departure_delays_df
+        .groupby(actual_departure_hour)
+        ["actual_departure_delay"]
+        .mean()
+        .loc[:hr_lim]
+    )
+
+    combined_hourly_delays_df = pd.concat(
+        [
+            hourly_sample_arrival_delay,
+            hourly_actual_arrival_delay,
+            hourly_sample_departure_delay,
+            hourly_actual_departure_delay,
+        ],
+        axis=1,
+    ).sort_index()
+
+    # print(combined_hourly_delays_df)
+
+    # TODO: cancellation
+    # arrival_cancel_df = merged_df.loc[
+    #     arr_mask_all,
+    #     ["date", "flight_number",
+    #      "sample_arrival_time", 
+    #      "actual_arrival_time",
+    #      "sample_cancelled",
+    #      "cancelled"]
+    # ]
+    # departure_cancel_df = merged_df.loc[
+    #     dep_mask_all,
+    #     ["date", "flight_number",
+    #      "sample_departure_time", 
+    #      "actual_departure_time",
+    #      "sample_cancelled",
+    #      "cancelled"]
+    # ]
+
+    # print(hourly_arrival_delays_rmse, hourly_departure_delays_rmse)
+
+    return combined_hourly_delays_df
+
+
+
+
+
 def plot_hourly_delays(df):
 
     fig = plt.figure(figsize=(8, 8))
@@ -711,38 +945,36 @@ def make_states(data, network_airport_codes):
         )
         states.append(state)
 
+    return states
+
+
 
 # TODO: deal with all of the above
 
 def train(
     network_airport_codes, 
-    # nominal_days, 
-    # failure_days,
     svi_steps, 
     n_samples, 
     svi_lr, 
-    plot_every, 
-    nominal=True,
-    day_nums=[1],
+    plot_every,
+    nominal,
+    failure,
+    day_strs,
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(1)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Avoid plotting error
     matplotlib.use("Agg")
 
-    # # Set the number of starting aircraft at each airport
-    # starting_aircraft = 50
-
     # Hyperparameters
     dt = 0.1 # .2
+    starting_aircraft = 10
 
-    days_str = [
-        f"2019-07-{day:02d}"
-        for day in day_nums
-    ]
-    days = pd.to_datetime(days_str)
+    days = pd.to_datetime(day_strs)
     num_days = len(days)
 
     data = ba_dataloader.load_remapped_data_bts(days)
@@ -757,13 +989,46 @@ def train(
 
     states = make_states(data, network_airport_codes)
 
-    
+    plt.figure()
+
+    # mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .005, .01, .03, device)
+    mst_prior_nominal = _gamma_dist_from_mean_std(.0125, .001, device)
+    s = mst_prior_nominal.sample((10000,))
+    # plt.hist(s, bins=256, density=True, alpha=.5, color='b')
+    sns.kdeplot(s, color='b', alpha=.33, fill=True,)
+
+    # mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .003, .01, .03, device)
+    mst_prior_failure = _gamma_dist_from_mean_std(.0200, .002, device)
+    s = mst_prior_failure.sample((10000,))
+    # plt.hist(s, bins=256, density=True, alpha=.5, color='r')
+    sns.kdeplot(s, color='r', alpha=.33, fill=True,)
+
+    plt.savefig('ab_test.png')
+
+    mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .01, .03, device)
+    s = mst_prior_default.sample((10000,))
+    # plt.hist(s, bins=256, density=True, alpha=.5, color='r')
+    sns.kdeplot(s, color='purple', alpha=.33, fill=True,)
+
+    plt.savefig('abc_test.png')
+
+    if nominal:
+        mst_prior = mst_prior_nominal
+        do_mle = False
+    elif failure:
+        mst_prior = mst_prior_failure
+        do_mle = False
+    else:
+        mst_prior = mst_prior_default
+        do_mle = True
 
     # Re-scale the ELBO by the number of days
     model = functools.partial(
-        augmented_air_traffic_network_model,
+        augmented_air_traffic_network_model_simplified,
 
         travel_times_dict=travel_times_dict,
+        initial_aircraft=starting_aircraft,
+
         include_cancellations=False,#True,
 
         source_use_actual_departure_time=True,
@@ -774,27 +1039,41 @@ def train(
         mean_service_time_effective_hrs=24,
         mean_turnaround_time_effective_hrs=24,
 
-        # use_nominal_prior=nominal,
-        # use_failure_prior=not nominal,
-        do_mle=True
+        mst_prior=mst_prior,
+        do_mle=do_mle,
     )
-    model = pyro.poutine.scale(model, scale=1.0 / num_days)
+    # model = pyro.poutine.scale(model, scale=1.0 / num_days)
+    # also scale by total number of flights for day-by-day?
+    model = pyro.poutine.scale(model, scale=1.0 / (num_flights))
 
     # Create an autoguide for the model
-    auto_guide = pyro.infer.autoguide.AutoDelta(model)
-    # auto_guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
-    # auto_guide = pyro.infer.autoguide.AutoLowRankMultivariateNormal(model)
-
+    guide = pyro.infer.autoguide.AutoDelta(model)
+    # guide = pyro.infer.autoguide.AutoMultivariateNormal(model)
+    # guide = pyro.infer.autoguide.AutoLowRankMultivariateNormal(model)
 
     # Set up SVI
-    gamma = 0.1  # final learning rate will be gamma * initial_lr
-    lrd = gamma ** (1 / svi_steps)
-    optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
+    # gamma = 0.1  # final learning rate will be gamma * initial_lr
+    # lrd = gamma ** (1 / svi_steps)
+    # optim = pyro.optim.ClippedAdam({"lr": svi_lr, "lrd": lrd})
     elbo = pyro.infer.Trace_ELBO(num_particles=1)
-    svi = pyro.infer.SVI(model, auto_guide, optim, elbo)
+    # svi = pyro.infer.SVI(model, auto_guide, optim, elbo)
+
+    def loss_fn(model, guide):
+        # print(
+        #     elbo.differentiable_loss(model, guide, states, dt), 
+        # )
+        return (
+            elbo.differentiable_loss(model, guide, states, dt)
+        )
+    
+    with pyro.poutine.trace(param_only=True) as param_capture:
+        loss = loss_fn(model, guide)
+
+    params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
+    optimizer = torch.optim.Adam(params, lr=svi_lr)
 
     run_name = f"[{','.join(network_airport_codes)}]_"
-    run_name += f"{'nominal' if nominal else 'failure'}_"
+    run_name += f"{'nominal' if nominal else 'failure' if failure else 'empty'}_"
     run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
     
     wandb.init(
@@ -813,66 +1092,50 @@ def train(
     )
 
     losses = []
-    arr_rmses = []
-    dep_rmses = []
-    arr_rmses_adj = []
-    dep_rmses_adj = []
-    rmse_idxs = []
-    rmses_record_every = 10
 
     pbar = tqdm.tqdm(range(svi_steps))
     for i in pbar:
-        loss = svi.step(states, dt)
+        # loss = svi.step(states, dt)
+
+        loss = loss_fn(model, guide)
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(params, 10.0)
+        optimizer.step()
+        optimizer.zero_grad()
+
         losses.append(loss)
 
         # pbar.set_description(f"ELBO loss: {loss:.2f}")
         # print(auto_guide.median(states, dt))
         # return
-        mst_mle = auto_guide.median(states, dt)["LGA_0_mean_service_time"].item()
+        mst_mle = guide.median(states, dt)["LGA_0_mean_service_time"].item()
         pbar.set_description(f"ELBO loss: {loss:.2f}, MST MLE: {mst_mle:.6f}")
-
-        if i % plot_every == 0 or i == svi_steps - 1:
-        # if i % rmses_record_every == 0 or i == svi_steps - 1:
-            arr_rmse, dep_rmse, arr_rmse_adj, dep_rmse_adj, hourly_delays = \
-            get_arrival_departures_rmses(
-                model, auto_guide, states, dt, observations_df, 1
-            )
-            arr_rmses.append(arr_rmse)
-            dep_rmses.append(dep_rmse)
-            arr_rmses_adj.append(arr_rmse_adj)
-            dep_rmses_adj.append(dep_rmse_adj)
-            rmse_idxs.append(i)
-            if i % plot_every == 0 or i == svi_steps - 1:
-                fig = plot_hourly_delays(hourly_delays)
-                wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
-                plt.close(fig)
-
+                
         if i % plot_every == 0 or i == svi_steps - 1:
 
             # fig = plot_elbo_losses(losses)
             # wandb.log({"ELBO loss": wandb.Image(fig)}, commit=False)
             # plt.close(fig)
 
-            # # print(arr_rmses, dep_rmses, rmse_idxs)
-            # fig = plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs)
-            # wandb.log({"Flight time RMSEs": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
+            hourly_delays = get_hourly_delays(
+                model, guide, states, dt, observations_df, 1
+            )
 
-            # fig = plot_travel_times(auto_guide, states, dt, n_samples, travel_times)
-            # wandb.log({"Travel times": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
+            fig = plot_hourly_delays(hourly_delays)
+            wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
+
 
             plotting_dict = {
-                # "mean service times": plot_service_times,
+                "mean service times": plot_service_times,
                 # "mean turnaround_times": plot_turnaround_times,
-                # "starting aircraft": plot_starting_aircraft,
                 # "baseline cancel probability": plot_base_cancel_prob,
-                # "soft max holding time": plot_soft_max_holding_time,
             }
         
             for name, plot_func in plotting_dict.items():
                 # for now require this common signature
-                fig = plot_func(auto_guide, states, dt, n_samples)
+                fig = plot_func(guide, states, dt, n_samples)
                 wandb.log({name: wandb.Image(fig)}, commit=False)
                 plt.close(fig)
 
@@ -881,16 +1144,16 @@ def train(
             save_path = os.path.join(dir_path, "checkpoints", run_name, f"{i}")
             os.makedirs(save_path, exist_ok=True)
             pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
-            torch.save(auto_guide.state_dict(), os.path.join(save_path, "guide.pth"))
+            torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
         # wandb.log({"ELBO": loss})
-        wandb.log({"ELBO": loss, "MST MLE": mst_mle}) # ?
+        wandb.log({"ELBO loss (nats per dim)": loss, "MST MLE (hours)": mst_mle}) # ?
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 
     output_dict = {
         'model': model,
-        'guide': auto_guide,
+        'guide': guide,
         'states': states,
         'dt': dt,
     }
@@ -914,39 +1177,32 @@ def train(
 @click.option("--n-samples", default=800, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
-# @click.option("--day", default=1, help="day")
+# # @click.option("--day", default=1, help="day")
 @click.option("--nominal", is_flag=True)
-# @click.option("--failure", is_flag=True)
-@click.option("--days", default=1, help="day")
+@click.option("--failure", is_flag=True)
+# @click.option("--days", default=1, help="day")
+@click.option("--day-strs", default='2019-07-01')
 
 
 def train_cmd(
-    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, nominal,days
+    network_airport_codes, svi_steps, n_samples, svi_lr, plot_every, nominal, failure, day_strs
 ):
     # TODO: make this better
 
-    nominal_days = [
-        1,2,3,4,5,7,9,
-        10,12,13,14,15,16,
-        20,24,25,26,27,28,29
-    ]
+    # nominal_days = [
+    #     1,2,3,4,5,7,9,
+    #     10,12,13,14,15,16,
+    #     20,24,25,26,27,28,29
+    # ]
 
-    failure_days = [
-        d for d in range(1,32)
-        if d not in nominal_days
-    ]
-
-    # nominal = day in nominal_days
-
-    # nominal = nominal
-
-    if not nominal:
-        day_nums = failure_days[:days]
-    else:
-        day_nums = nominal_days[:days]
-        
+    # failure_days = [
+    #     d for d in range(1,32)
+    #     if d not in nominal_days
+    # ] 
 
     network_airport_codes = network_airport_codes.split(',')
+    day_strs = day_strs.split(',')
+
     train(
         network_airport_codes,
         svi_steps,
@@ -954,8 +1210,8 @@ def train_cmd(
         svi_lr,
         plot_every,
         nominal,
-        # day_nums=[day], # TODO: this is not great way of setting the day
-        day_nums=day_nums
+        failure,
+        day_strs
     )
 
 
