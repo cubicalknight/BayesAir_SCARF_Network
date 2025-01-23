@@ -436,8 +436,8 @@ def train(
 
     for i in pbar:
         guide_optimizer.zero_grad()
-        # loss = elbo_loss()
-        loss = elbo_loss_mp()
+        loss = elbo_loss()
+        # loss = elbo_loss_mp()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(
             guide.parameters(), 100.0 # TODO :grad clip param
