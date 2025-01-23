@@ -268,7 +268,8 @@ def augmented_air_traffic_network_model(
 
     max_waiting_time: float = None,
 
-    do_mle: bool = False
+    do_mle: bool = False,
+    mst_as_param = None,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -780,7 +781,8 @@ def augmented_air_traffic_network_model_simplified(
     mst_prior: dist.Distribution = None,
     mst_prior_weight: float = 1.0,
 
-    do_mle: bool = False
+    do_mle: bool = False,
+    mst_as_param = None,
 ):
     """
     Simulate the behavior of an air traffic network.
@@ -890,8 +892,8 @@ def augmented_air_traffic_network_model_simplified(
         mst_dist = dist.AffineBeta(
             torch.tensor(1.0, device=device),
             torch.tensor(1.0, device=device),
-            loc=torch.tensor(.010).to(device),
-            scale=torch.tensor(.020).to(device),
+            loc=torch.tensor(.005).to(device),
+            scale=torch.tensor(.035).to(device),
         )
     else:
         mst_dist = mst_prior
@@ -902,6 +904,12 @@ def augmented_air_traffic_network_model_simplified(
                 code: pyro.sample(
                     f"{code}_{t_idx}_mean_service_time",
                     mst_dist.mask(not do_mle)
+                )
+                if mst_as_param is None else
+                pyro.param(
+                    f"{code}_{t_idx}_mean_service_time",
+                    mst_as_param, # idk
+                    constraint=dist.constraints.positive,
                 )
                 for code in network_airport_codes
             }
