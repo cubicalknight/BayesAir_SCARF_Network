@@ -381,31 +381,6 @@ def train(
 
         return loss
     
-    def elbo_loss_mp():
-        # loss = torch.tensor(0.0).to(device)
-        args = []
-
-        for name, subsample in subsamples.items():
-
-            model = subsample["model"]
-            num_flights = subsample["num_flights"]
-            visibility = subsample["visibility"]
-            
-            # TODO: assing label based on weather, states, idk
-            prior_label = wt.assign_label(visibility)
-            guide_label = ct.assign_label(visibility, num_flights)
-
-            # print(prior_label, guide_label)
-
-            prior_dist = PriorMixture(prior_label)
-            guide_dist = guide(guide_label)
-
-            args.append((model, guide_dist, prior_dist, device, 1))
-            # print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
-
-        losses = Pool().starmap(objective, args)
-        loss = sum(losses) / len(subsamples)
-        return loss
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
