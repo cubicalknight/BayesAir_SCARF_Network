@@ -13,6 +13,7 @@ import torch
 from math import ceil, floor
 import functools
 import dill
+import sys
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -34,6 +35,7 @@ from scripts.utils import (
     _shifted_gamma_dist_from_shape_rate,
 )
 
+from pbar_pool import PbarPool, Pbar
 
 def plot_travel_times(
     auto_guide, states, n_samples, empirical_travel_times, wandb=True
@@ -975,14 +977,53 @@ def make_states(data, network_airport_codes):
 # TODO: deal with all of the above
 
 
-def asdf(model, states):
+def single_particle_model_log_prob(model, states):
 
+    # TODO: if we had more time should vectorize the model but ugh
+    # with pyro.plate("samples", 10, dim=-1):
     model_trace = pyro.poutine.trace(model).get_trace(states)
     model_logprob = model_trace.log_prob_sum()
 
-    exit()
-
     return model_logprob
+
+def model_log_prob(model, states, device, num_particles=1):
+    """
+    this is like p(y|z;c) i think
+    """
+
+    model_log_prob = torch.tensor(0.0, device=device)
+
+    for _ in range(num_particles):
+        model_log_prob += single_particle_model_log_prob(model, states) 
+    model_log_prob /= num_particles
+
+    return model_log_prob
+
+
+def single_particle_elbo(model, guide_dist, states):
+    posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
+
+    conditioning_dict = {'LGA_0_mean_service_time': posterior_sample}
+
+    model_trace = pyro.poutine.trace(
+        pyro.poutine.condition(model, data=conditioning_dict)
+    ).get_trace(
+        states=states
+    )
+    model_logprob = model_trace.log_prob_sum()
+
+    return model_logprob - posterior_logprob
+
+def objective_fn(model, guide_dist, states, device, n_elbo_particles=1):
+    """ELBO loss for the air traffic problem."""
+    elbo = torch.tensor(0.0).to(device)
+    for _ in range(n_elbo_particles):
+        elbo += single_particle_elbo(guide_dist, states) / n_elbo_particles
+
+    # # Make it negative to make it a loss and scale by the number of flights
+    # num_flights = sum(len(state.pending_flights) for state in states)
+    # return -elbo / num_flights
+    return -elbo
 
 
 def train(
@@ -996,15 +1037,17 @@ def train(
     n_elbo_particles,
     plot_every,
     rng_seed,
-    day_strs,
-    prior_type,
-    prior_scale,
-    posterior_guide,
+    multiprocess,
+    pbars,
+
+    rem_args,
     use_gpu=False
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
+
+    day_strs, prior_type, prior_scale, posterior_guide = rem_args
 
     if use_gpu:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1029,8 +1072,9 @@ def train(
 
     num_days = len(days)
     num_flights = sum([len(df) for df in data.values()])
-    print(f"Number of days: {num_days}")
-    print(f"Number of flights: {num_flights}")
+    if not multiprocess:
+        print(f"Number of days: {num_days}")
+        print(f"Number of flights: {num_flights}")
 
     # make things with the data
     travel_times_dict, observations_df = \
@@ -1110,9 +1154,6 @@ def train(
     # re-scale ELBO
     model = pyro.poutine.scale(model, scale=model_scale)
 
-    asdf(model, states)
-
-
     # Create an autoguide for the model
     init_loc_fn = pyro.infer.autoguide.initialization.init_to_value(
         values={
@@ -1121,6 +1162,7 @@ def train(
         },
         fallback=pyro.infer.autoguide.initialization.init_to_median
     )
+
 
     if posterior_guide == "gaussian":
         guide = pyro.infer.autoguide.AutoMultivariateNormal(model, init_loc_fn=init_loc_fn)
@@ -1182,7 +1224,19 @@ def train(
     losses = []
     losses_from_prior = []
 
-    pbar = tqdm(range(svi_steps))
+    if not multiprocess:
+        pbar = tqdm(range(svi_steps))
+    else:
+        if prior_type == "failure":
+            color = (255, 100, 100)
+        elif prior_type == "nominal":
+            color = (100, 100, 255)
+        else:
+            color = (200, 200, 200)
+        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
+        pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\nprocess {pbars.id()}', color=color)
+
+    
     for i in pbar:
         loss = svi.step(states)
         losses.append(loss)
@@ -1204,7 +1258,8 @@ def train(
 
         desc = f"ELBO loss: {loss:.2f}, mst mles: "
         desc += ", ".join([f'{mst_mle:.5f}' for mst_mle in mst_mles])
-        pbar.set_description(desc)
+        if not multiprocess:
+            pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
 
@@ -1270,7 +1325,7 @@ def train(
     return loss
 
 
-from multiprocessing import Process
+from multiprocessing import Process, Pool, cpu_count
 # https://stackoverflow.com/questions/7207309/how-to-run-functions-in-parallel
 # trying something
 def run_cpu_tasks_in_parallel(tasks):
@@ -1280,6 +1335,7 @@ def run_cpu_tasks_in_parallel(tasks):
     for running_task in running_tasks:
         running_task.join()
 
+import warnings
 
 # TODO: add functionality to pick days
 @click.command()
@@ -1314,7 +1370,8 @@ def run_cpu_tasks_in_parallel(tasks):
 @click.option("--all-combos", is_flag=True)
 
 @click.option("--multiprocess", is_flag=True)
-
+@click.option("--processes", default=None)
+@click.option("--wandb-silent", is_flag=True)
 
 
 def train_cmd(
@@ -1323,7 +1380,7 @@ def train_cmd(
     plot_every, rng_seed, gamma, dt, n_elbo_particles,
     prior_type, prior_scale, posterior_guide, 
     day_strs, year, month, start_day, end_day,
-    learn_together, all_combos, multiprocess,
+    learn_together, all_combos, multiprocess, processes, wandb_silent
 ):
     # TODO: make this better
 
@@ -1337,6 +1394,11 @@ def train_cmd(
     #     d for d in range(1,32)
     #     if d not in nominal_days
     # ] 
+
+    if wandb_silent:
+        os.environ["WANDB_SILENT"] = "true"
+    # else:
+    #     os.environ["WANDB_SILENT"] = "false"
 
     default_zero_scale = 1e-12
     default_low_scale = .02
@@ -1382,36 +1444,51 @@ def train_cmd(
             for pguide in ("gaussian", "iafnormal")
         ]
 
-    pbar = tqdm(range(len(day_strs_list)))
-    pbar.set_description('day')
-    for i in pbar:
-        
-        if multiprocess:
-            tasks = [
-                # train(
-                functools.partial(
-                    train,
-                    project,
-                    network_airport_codes,
-                    svi_steps,
-                    n_samples,
-                    svi_lr,
-                    gamma,
-                    dt,
-                    n_elbo_particles,
-                    plot_every,
-                    rng_seed,
-                    day_strs_list[i],
-                    # prior_type,
-                    # prior_scale,
-                    # posterior_guide,
-                    *(ppp_params[j])
-                )
-                for j in range(len(ppp_params))
-            ]
-            run_cpu_tasks_in_parallel(tasks)
+    if multiprocess:
+        pbars = PbarPool(width=100)
+        def initializer():
+            sys.stdout = open(os.devnull, 'w')
+            return pbars.initializer()
+        warnings.simplefilter("ignore")
+        os.environ["PYTHONWARNINGS"] = "ignore"
 
-        else:
+    base_func = functools.partial(
+        train,
+        project,
+        network_airport_codes,
+        svi_steps,
+        n_samples,
+        svi_lr,
+        gamma,
+        dt,
+        n_elbo_particles,
+        plot_every,
+        rng_seed,
+        multiprocess,
+        pbars,
+    )
+
+    rem_args = [
+        (day_strs_list[i], *(ppp_params[j]))
+        for i in range(len(day_strs_list))
+        for j in range(len(ppp_params))
+    ]
+    # print(rem_args)
+    # return
+
+    if processes is None:
+        processes = cpu_count()
+
+    if multiprocess:
+        with Pool(processes=processes, initializer=initializer()) as p:
+            global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
+            for _ in global_pbar:
+                pass
+
+    else:
+        pbar = tqdm(range(len(day_strs_list)))
+        pbar.set_description('day')
+        for i in pbar:
             pppbar = tqdm(range(len(ppp_params)), leave=False)
             pppbar.set_description('param combo')
             for j in pppbar:
@@ -1426,13 +1503,15 @@ def train_cmd(
                     n_elbo_particles,
                     plot_every,
                     rng_seed,
+                    False,
+                    None,
                     day_strs_list[i],
                     # prior_type,
                     # prior_scale,
                     # posterior_guide,
                     *(ppp_params[j])
                 )
-        # print(day_strs_list[i], *(ppp_params[j]))
+            # print(day_strs_list[i], *(ppp_params[j]))
 
 
 if __name__ == "__main__":
