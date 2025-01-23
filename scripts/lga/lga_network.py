@@ -625,7 +625,7 @@ def get_arrival_departures_rmses(
 
 def get_hourly_delays(
     model, auto_guide, states, 
-    observations_df, n_samples, wandb=True
+    observations_df, n_samples, wandb=True,
 ):
     
     with pyro.plate("samples", n_samples, dim=-1):
@@ -977,53 +977,6 @@ def make_states(data, network_airport_codes):
 # TODO: deal with all of the above
 
 
-def single_particle_model_log_prob(model, states):
-
-    # TODO: if we had more time should vectorize the model but ugh
-    # with pyro.plate("samples", 10, dim=-1):
-    model_trace = pyro.poutine.trace(model).get_trace(states)
-    model_logprob = model_trace.log_prob_sum()
-
-    return model_logprob
-
-def model_log_prob(model, states, device, num_particles=1):
-    """
-    this is like p(y|z;c) i think
-    """
-
-    model_log_prob = torch.tensor(0.0, device=device)
-
-    for _ in range(num_particles):
-        model_log_prob += single_particle_model_log_prob(model, states) 
-    model_log_prob /= num_particles
-
-    return model_log_prob
-
-
-def single_particle_elbo(model, guide_dist, states):
-    posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
-
-    conditioning_dict = {'LGA_0_mean_service_time': posterior_sample}
-
-    model_trace = pyro.poutine.trace(
-        pyro.poutine.condition(model, data=conditioning_dict)
-    ).get_trace(
-        states=states
-    )
-    model_logprob = model_trace.log_prob_sum()
-
-    return model_logprob - posterior_logprob
-
-def objective_fn(model, guide_dist, states, device, n_elbo_particles=1):
-    """ELBO loss for the air traffic problem."""
-    elbo = torch.tensor(0.0).to(device)
-    for _ in range(n_elbo_particles):
-        elbo += single_particle_elbo(guide_dist, states) / n_elbo_particles
-
-    # # Make it negative to make it a loss and scale by the number of flights
-    # num_flights = sum(len(state.pending_flights) for state in states)
-    # return -elbo / num_flights
-    return -elbo
 
 
 def train(
