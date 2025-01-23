@@ -1908,6 +1908,16 @@ qa = ["flake8 (==5.0.4)", "mypy (==0.971)", "types-setuptools (==67.2.0.1)"]
 testing = ["docopt", "pytest"]
 
 [[package]]
+name = "pbar-pool"
+version = "0.0.2"
+description = "A straightforward, dependency free way to update multiple progress bars with python's multiprocessing library."
+optional = false
+python-versions = "*"
+files = [
+    {file = "pbar-pool-0.0.2.tar.gz", hash = "sha256:74000e0ebf8152038b06e79ea49234df650eb281e0b92a77bb8f42544f71c201"},
+]
+
+[[package]]
 name = "pexpect"
 version = "4.9.0"
 description = "Pexpect allows easy control of interactive console applications."
@@ -3636,4 +3646,4 @@ dev = ["pre-commit", "pytest", "ruff"]
 [metadata]
 lock-version = "2.0"
 python-versions = "<3.12,>=3.9"
-content-hash = "d8e65e16442af1b66a0d26c789e45678b9e7102e4ac44e192a4d7db2c604e7ae"
+content-hash = "cb86575f3a4d537a3edf4938d43199e5e4360a3c883d435c4ef2ff5e1c5950a8"
