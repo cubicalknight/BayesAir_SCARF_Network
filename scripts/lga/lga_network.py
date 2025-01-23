@@ -1292,7 +1292,7 @@ import warnings
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-4")
+@click.option("--project", default="bayes-air-atrds-attempt-6")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -1321,10 +1321,12 @@ import warnings
 
 @click.option("--learn-together", is_flag=True)
 @click.option("--all-combos", is_flag=True)
+@click.option("--empty-only", is_flag=True)
 
 @click.option("--multiprocess/--no-multiprocess", default=True)
 @click.option("--processes", default=None)
 @click.option("--wandb-silent", is_flag=True)
+@click.option("--empty-only", is_flag=True)
 
 
 def train_cmd(
@@ -1333,7 +1335,7 @@ def train_cmd(
     plot_every, rng_seed, gamma, dt, n_elbo_particles,
     prior_type, prior_scale, posterior_guide, 
     day_strs, year, month, start_day, end_day,
-    learn_together, all_combos, multiprocess, processes, wandb_silent
+    learn_together, all_combos, multiprocess, processes, wandb_silent, empty_only
 ):
     # TODO: make this better
 
@@ -1384,10 +1386,14 @@ def train_cmd(
             [day_str] for day_str in day_strs
         ]
 
-    if not all_combos:
-        ppp_params = [(prior_type, prior_scale, posterior_guide,)]
-    else:
+
+    if empty_only:
         ppp_params = [
+            ("empty", default_zero_scale, pguide)
+            for pguide in ("gaussian", "iafnormal")
+        ]
+    elif all_combos:
+        ppp_params += [
             (ptype, pscale, pguide)
             for ptype in ("failure", "nominal")
             for pscale in (default_low_scale, default_high_scale)
@@ -1396,6 +1402,9 @@ def train_cmd(
             ("empty", default_zero_scale, pguide)
             for pguide in ("gaussian", "iafnormal")
         ]
+    else:
+        ppp_params = [(prior_type, prior_scale, posterior_guide,)]
+
 
     if multiprocess:
         pbars = PbarPool(width=100)

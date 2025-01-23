@@ -274,13 +274,13 @@ def train(
        guide = zuko.flows.NSF(
             features=mst_split,
             context=n_context,
-            hidden_features=(8, 8),
+            hidden_features=(2, 2),
         ).to(device)
     elif posterior_guide == "cnf":
         guide = zuko.flows.CNF(
             features=mst_split,
             context=n_context,
-            hidden_features=(8, 8),
+            hidden_features=(2, 2),
         ).to(device)
     elif posterior_guide == "gmm":
         guide = ConditionalGaussianMixture(
@@ -439,7 +439,7 @@ def train(
         loss = elbo_loss()
         # loss = elbo_loss_mp()
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(
+        guide_grad_norm = torch.nn.utils.clip_grad_norm_(
             guide.parameters(), 100.0 # TODO :grad clip param
         )
         guide_optimizer.step()
@@ -459,7 +459,7 @@ def train(
             labels = [torch.tensor([a, b]).to(device) for a in (0.0, 1.0) for b in (0.0, 1.0)]
             for label in labels:
                 fig = plt.figure()
-                samples = torch.exp(guide(label).sample((n_samples,))/1000)
+                samples = torch.exp(guide(label).sample((n_samples,)))/1000
                 sns.histplot(
                     samples, 
                     color='b', 
@@ -468,6 +468,7 @@ def train(
                     edgecolor='k', 
                     linewidth=0
                 )
+                plt.xlim(0,.050)
                 wandb.log({f"posteriors/{label.numpy()}": wandb.Image(fig)}, commit=False)
                 plt.close(fig)
             
