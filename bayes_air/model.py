@@ -889,12 +889,13 @@ def augmented_air_traffic_network_model_simplified(
     }
 
     if mst_prior is None:
-        mst_dist = dist.AffineBeta(
-            torch.tensor(1.0, device=device),
-            torch.tensor(1.0, device=device),
-            loc=torch.tensor(.005).to(device),
-            scale=torch.tensor(.035).to(device),
-        )
+        # mst_dist = dist.AffineBeta(
+        #     torch.tensor(1.0, device=device),
+        #     torch.tensor(1.0, device=device),
+        #     loc=torch.tensor(.005).to(device),
+        #     scale=torch.tensor(.035).to(device),
+        # )
+        mst_dist = _gamma_dist_from_mean_std(0.015, 0.010)
     else:
         mst_dist = mst_prior
 

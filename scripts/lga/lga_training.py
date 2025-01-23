@@ -14,6 +14,7 @@ from math import ceil, floor
 import functools
 import dill
 import sys
+from pathlib import Path
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -108,20 +109,37 @@ def objective_fn(model, guide_dist, states, device, n_elbo_particles=1):
     return -elbo
 
 
-def asdf(model, sample, states):
+
+
+def single_particle_objective(model, guide_dist, prior_dist):
     """
-    p(y|z)
+    log p(y|z) + log p(z;c) - log q(z|y;c)
     """
-    conditioning_dict = map_to_sample_sites_identity(sample)
+    posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
+
+    conditioning_dict = map_to_sample_sites_identity(
+        torch.clamp(torch.exp(posterior_sample), max=.05)
+        # torch.clamp(posterior_sample, min=1e-5, max=.05)
+    )
+    
     model_trace = pyro.poutine.trace(
         pyro.poutine.condition(model, data=conditioning_dict)
-        # model
-    ).get_trace(
-        states=states,
-        # mst_as_param=sample,
-    )
+    ).get_trace()
     model_logprob = model_trace.log_prob_sum()
-    return model_logprob
+
+    prior_logprob = prior_dist.log_prob(torch.exp(posterior_sample))
+
+    return (model_logprob + prior_logprob - posterior_logprob).squeeze()
+
+
+def objective(model, guide_dist, prior_dist, device, n_particles=1):
+    """ELBO loss for the air traffic problem."""
+    elbo = torch.tensor(0.0).to(device)
+    for _ in range(n_particles):
+        elbo += single_particle_objective(model, guide_dist, prior_dist) / n_particles
+    # we already scale in the model?
+    return -elbo
+
 
 
 def train(
@@ -135,9 +153,6 @@ def train(
     n_elbo_particles,
     plot_every,
     rng_seed,
-    multiprocess,
-    pbars,
-
     rem_args,
     use_gpu=False
 ):
@@ -145,7 +160,7 @@ def train(
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
 
-    day_strs, prior_type, prior_scale, posterior_guide = rem_args
+    day_strs_list, posterior_guide = rem_args
 
     if use_gpu:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -158,30 +173,75 @@ def train(
     # Avoid plotting error . test
     matplotlib.use("Agg")
 
+    dir_path = Path(__file__).parent
+
+    processed_visibility = pd.read_csv(dir_path / 'processed_visibility.csv')
+    visibility_dict = dict(processed_visibility.values)
+
     # SETTING UP THE MODEL AND STUFF
 
     # Hyperparameters
     initial_aircraft = 50.0 # not used!
     mst_effective_hrs = 24 # not used!
     mst_split = 1 # not really used
-    mst_prior_scale = prior_scale # .1 # 1.0 = scaled to be as much as rest of the model?
 
-    # gather data
-    days = pd.to_datetime(day_strs)
-    data = ba_dataloader.load_remapped_data_bts(days)
+    subsamples = {}
 
-    num_days = len(days)
-    num_flights = sum([len(df) for df in data.values()])
-    if not multiprocess:
-        print(f"Number of days: {num_days}")
-        print(f"Number of flights: {num_flights}")
+    for day_strs in day_strs_list:
 
-    # make things with the data
-    travel_times_dict, observations_df = \
-        make_travel_times_dict_and_observation_df(
-            data, network_airport_codes
-        ) 
-    states = make_states(data, network_airport_codes)
+        # gather data
+        days = pd.to_datetime(day_strs)
+        data = ba_dataloader.load_remapped_data_bts(days)
+        name = ", ".join(day_strs)
+
+        num_days = len(days)
+        num_flights = sum([len(df) for df in data.values()])
+        print(f"{name} -> days: {num_days}, flights: {num_flights}")
+
+        # make things with the data
+        travel_times_dict, observations_df = \
+            make_travel_times_dict_and_observation_df(
+                data, network_airport_codes
+            ) 
+        states = make_states(data, network_airport_codes)
+
+        # set up common model arguments
+        model = functools.partial(
+            augmented_air_traffic_network_model_simplified,
+
+            states=states,
+
+            travel_times_dict=travel_times_dict,
+            initial_aircraft=initial_aircraft,
+
+            # include_cancellations=True,
+            include_cancellations=False,
+            mean_service_time_effective_hrs=mst_effective_hrs,
+            delta_t=dt,
+
+            source_use_actual_departure_time=True,
+            # source_use_actual_late_aircraft_delay=True,
+            # source_use_actual_carrier_delay=True,
+            # source_use_actual_security_delay=True,
+
+            # source_use_actual_cancelled=True,
+            source_use_actual_cancelled=False,
+            mst_prior_weight=1e-12, # effectively zero
+        )
+
+        # by default, scale ELBO down by num flights
+        model_scale = 1.0 / (num_flights)
+        model = pyro.poutine.scale(model, scale=model_scale)
+
+        subsamples[name] = {
+            # "states": states,
+            # "travel_times_dict": travel_times_dict,
+            # "observations_df": observations_df,
+            "num_flights": num_flights,
+            "model": model,
+            "visibility": visibility_dict[name]
+        }
+
 
     # here, we make the nominal, failure, and uniform (not used) priors...
     # TODO: shifted gamma doesn't work. i have no idea why
@@ -194,124 +254,141 @@ def train(
     # mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .005, .030, device)
     mst_prior_default = _gamma_dist_from_mean_std(.0135, .0050, device)
 
-    if not multiprocess:
-        fig = plt.figure()
-        s = mst_prior_nominal.sample((10000,)).detach().cpu()
-        sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-        s = mst_prior_failure.sample((10000,)).detach().cpu()
-        sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-        plt.savefig('ab_test.png')
-        s = mst_prior_default.sample((10000,)).detach().cpu()
-        sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-        plt.legend()
-        plt.title("prior distributions example")
-        plt.savefig('abc_test.png')
-        plt.close(fig)
-    # return
-
-    # by default, scale ELBO down by num flights
-    model_scale = 1.0 / (num_flights)
-    mst_prior_weight = mst_prior_scale / model_scale 
-    # equals mst_prior_scale * num_flights / num_flights -> so should end up just as scale?
-
-    # set up common model arguments
-    model = functools.partial(
-        augmented_air_traffic_network_model_simplified,
-
-        travel_times_dict=travel_times_dict,
-        initial_aircraft=initial_aircraft,
-
-        # include_cancellations=True,
-        include_cancellations=False,
-        mean_service_time_effective_hrs=mst_effective_hrs,
-        delta_t=dt,
-
-        source_use_actual_departure_time=True,
-        # source_use_actual_late_aircraft_delay=True,
-        # source_use_actual_carrier_delay=True,
-        # source_use_actual_security_delay=True,
-
-        # source_use_actual_cancelled=True,
-        source_use_actual_cancelled=False,
-
-        # mst_prior=mst_prior_nominal,
-        # mst_prior_weight=1e-12,
-    )
-
-
-
-
-
-
-
-
-
-
-
-    # re-scale ELBO
-    model = pyro.poutine.scale(model, scale=model_scale)
-
-    x = []
-    y = []
-    zs = []
-    for val in np.arange(.005, .035, .001):
-        n=1
-        try:
-            l = sum(
-                [
-                    asdf(model, torch.tensor(val).to(device), states)
-                    for _ in range(n)
-                ]
-            ) / n
-            z = mst_prior_nominal.log_prob(val)
-            x.append(val)
-            y.append(l.item())
-            zs.append(z.item())
-            print(f'{val:.3f}', f'{l.item():.4f}', f'{z.item():.4f}')
-        except:
-            pass
     fig = plt.figure()
-    plt.plot(x,y)
-    plt.plot(x,zs)
-    plt.savefig('y_given_z_test.png')
+    s = mst_prior_nominal.sample((10000,)).detach().cpu()
+    sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    s = mst_prior_failure.sample((10000,)).detach().cpu()
+    sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    plt.savefig('ab_test.png')
+    s = mst_prior_default.sample((10000,)).detach().cpu()
+    sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    plt.legend()
+    plt.title("prior distributions example")
+    plt.savefig('abc_test.png')
     plt.close(fig)
     
-    # print(f'{best_val:.3f}', best_l)
 
-    return
-
-    # Create an autoguide for the model
-    init_loc_fn = pyro.infer.autoguide.initialization.init_to_value(
-        values={
-            f'LGA_{t_idx}_mean_service_time': torch.tensor(.015).to(device)
-            for t_idx in range(3)
-        },
-        fallback=pyro.infer.autoguide.initialization.init_to_median
-    )
-
+    # now define guide
+    n_context = 2
     if posterior_guide == "nsf":
-       _guide = zuko.flows.NSF(
+       guide = zuko.flows.NSF(
             features=mst_split,
-            context=1,
+            context=n_context,
             hidden_features=(8, 8),
         ).to(device)
     elif posterior_guide == "cnf":
-        _guide = zuko.flows.CNF(
+        guide = zuko.flows.CNF(
             features=mst_split,
-            context=1,
+            context=n_context,
             hidden_features=(8, 8),
         ).to(device)
     elif posterior_guide == "gmm":
-        _guide = ConditionalGaussianMixture(
-            n_context=1, n_features=1,
+        guide = ConditionalGaussianMixture(
+            n_context=n_context, 
+            n_features=mst_split,
         )
     else:
         raise ValueError
     
-    # testing
-    label = torch.tensor([0.0]).to(device).detach()
-    guide = _guide(label)
+    # now define prior
+    # TODO!!:
+    prior_dists = (
+        mst_prior_nominal,
+        mst_prior_failure,
+    )
+    failure_prior = mst_prior_failure
+    nominal_prior = mst_prior_nominal
 
+    class PriorMixture():
+        def __init__(self, label):
+            self.label = label
+        def log_prob(self, sample):
+            return (
+                (1-self.label) * failure_prior.log_prob(sample) 
+                + (self.label) * nominal_prior.log_prob(sample)
+            )
+        
+    class WeatherThreshold(torch.nn.Module):
+
+        def __init__(self, a):
+            super().__init__()
+            self.device = device
+            self.visibility_threshold = torch.nn.Parameter(
+                torch.tensor(2.5).to(device),
+                requires_grad=True
+            )
+            # self.ceiling_threshold = torch.nn.Parameter()
+            self.a = torch.tensor(a).to(device)
+
+        def assign_label(self, visibility):
+            return torch.nn.functional.sigmoid(
+                self.a * (self.visibility_threshold - visibility)
+            )
+        
+
+    class ClusterThreshold(torch.nn.Module):
+
+        def __init__(self, a):
+            super().__init__()
+            self.device = device
+            self.visibility_threshold = torch.nn.Parameter(
+                torch.tensor(3.5).to(device),
+                requires_grad=True
+            )
+            self.num_flights_threshold = torch.nn.Parameter(
+                torch.tensor(900.0).to(device),
+                requires_grad=True
+            )
+            # self.ceiling_threshold = torch.nn.Parameter()
+            self.a = torch.tensor(a).to(device)
+
+        def assign_label(self, visibility, num_flights):
+            w = torch.nn.functional.sigmoid(
+                self.a * (self.visibility_threshold - visibility)
+            )
+            x = torch.nn.functional.sigmoid(
+                self.a * (num_flights - self.num_flights_threshold )
+            )
+            return torch.stack((w, x), dim=-1)
+        
+    wt = WeatherThreshold(50.0)
+    ct = ClusterThreshold(50.0)
+
+    def elbo_loss():
+        loss = torch.tensor(0.0).to(device)
+
+        for name, subsample in subsamples.items():
+
+            model = subsample["model"]
+            num_flights = subsample["num_flights"]
+            visibility = subsample["visibility"]
+            
+            # TODO: assing label based on weather, states, idk
+            prior_label = wt.assign_label(visibility)
+            guide_label = ct.assign_label(visibility, num_flights)
+
+            print(prior_label, guide_label)
+
+            prior_dist = PriorMixture(prior_label)
+            guide_dist = guide(guide_label)
+
+            subsample_loss = objective(
+                model, guide_dist, prior_dist, device, 1
+            ) 
+            print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
+
+            loss += subsample_loss / len(subsamples)
+
+        return loss
+    
+    loss = elbo_loss()
+    
+    return
+
+
+
+
+    return
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
@@ -502,36 +579,36 @@ import warnings
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 
-@click.option("--prior-type", default="empty", help="nominal/failure/empty")
+# @click.option("--prior-type", default="empty", help="nominal/failure/empty")
 @click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace") 
-# delta and laplace break plots rn 
-@click.option("--prior-scale", default=0.0, type=float)
-# empty: 2 (each guide)
-# nominal: 4 (each guide, two scale levels)
-# failure: 4 (each guide, two scale levels)
-# for scale levels, let's try .1 and .25 first maybe?
+# # delta and laplace break plots rn 
+# @click.option("--prior-scale", default=0.0, type=float)
 
 @click.option("--day-strs", default=None)
+# @click.option("--day-strs-path", default=None) # TODO: make this!!
 @click.option("--year", default=None)
 @click.option("--month", default=None)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 
-@click.option("--learn-together", is_flag=True)
-@click.option("--all-combos", is_flag=True)
+# @click.option("--learn-together", is_flag=True)
+# @click.option("--all-combos", is_flag=True)
 
-@click.option("--multiprocess/--no-multiprocess", default=True)
-@click.option("--processes", default=None)
-@click.option("--wandb-silent", is_flag=True)
+# @click.option("--multiprocess/--no-multiprocess", default=True)
+# @click.option("--processes", default=None)
+# @click.option("--wandb-silent", is_flag=True)
 
 
 def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
     plot_every, rng_seed, gamma, dt, n_elbo_particles,
-    prior_type, prior_scale, posterior_guide, 
+    # prior_type, prior_scale, 
+    posterior_guide, 
     day_strs, year, month, start_day, end_day,
-    learn_together, all_combos, multiprocess, processes, wandb_silent
+    # learn_together, 
+    # all_combos, 
+    # multiprocess, processes, wandb_silent
 ):
     # TODO: make this better
 
@@ -545,20 +622,6 @@ def train_cmd(
     #     d for d in range(1,32)
     #     if d not in nominal_days
     # ] 
-
-    if wandb_silent or multiprocess:
-        os.environ["WANDB_SILENT"] = "true"
-    # else:
-    #     os.environ["WANDB_SILENT"] = "false"
-
-    default_zero_scale = 1e-12
-    default_low_scale = .02
-    default_high_scale = .1
-
-    if prior_scale <= 0.0:
-        prior_scale = default_zero_scale # can't actually be 0
-        if prior_type != "empty":
-            print("warning: zero prior_scale being used with non-empty prior type")
 
     network_airport_codes = network_airport_codes.split(',')
     if day_strs is not None:
@@ -575,38 +638,12 @@ def train_cmd(
     else:
         raise ValueError
     
-    if learn_together:
-        day_strs_list = [day_strs]
-    else:
-        day_strs_list = [
-            [day_str] for day_str in day_strs
-        ]
+    day_strs_list = [
+        [day_str] for day_str in day_strs
+    ]
+    
 
-    if not all_combos:
-        ppp_params = [(prior_type, prior_scale, posterior_guide,)]
-    else:
-        ppp_params = [
-            (ptype, pscale, pguide)
-            for ptype in ("failure", "nominal")
-            for pscale in (default_low_scale, default_high_scale)
-            for pguide in ("gmm", "nsf")
-        ] + [
-            ("empty", default_zero_scale, pguide)
-            for pguide in ("gmm", "nsf")
-        ]
-
-    if multiprocess:
-        pbars = PbarPool(width=100)
-        def initializer():
-            sys.stdout = open(os.devnull, 'w')
-            return pbars.initializer()
-        warnings.simplefilter("ignore")
-        os.environ["PYTHONWARNINGS"] = "ignore"
-    else:
-        pbars = None
-
-    base_func = functools.partial(
-        train,
+    train(
         project,
         network_airport_codes,
         svi_steps,
@@ -617,30 +654,11 @@ def train_cmd(
         n_elbo_particles,
         plot_every,
         rng_seed,
-        multiprocess,
-        pbars,
+        (
+            day_strs_list,
+            posterior_guide
+        )
     )
-
-    rem_args = [
-        (day_strs_list[i], *(ppp_params[j]))
-        for i in range(len(day_strs_list))
-        for j in range(len(ppp_params))
-    ]
-    # print(rem_args)
-    # return
-
-    if processes is None:
-        processes = cpu_count()
-
-    if multiprocess:
-        with Pool(processes=processes, initializer=initializer()) as p:
-            global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
-            for _ in global_pbar:
-                pass
-
-    else:
-        for rem_arg in rem_args:
-            base_func(rem_arg)
 
 
 if __name__ == "__main__":

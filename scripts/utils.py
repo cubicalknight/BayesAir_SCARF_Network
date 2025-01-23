@@ -180,7 +180,7 @@ class MixtureOfDiagNormals(dist.MixtureOfDiagNormals):
 
 
 class ConditionalGaussianMixture(LazyDistribution):
-    def __init__(self, n_context: int, n_features: int):
+    def __init__(self, n_context: int, n_features: int, means=None, log_vars=None):
         super().__init__()
         self.n_context = n_context
         self.n_features = n_features
