@@ -118,16 +118,16 @@ def single_particle_objective(model, guide_dist, prior_dist):
     posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
 
     conditioning_dict = map_to_sample_sites_identity(
-        torch.clamp(torch.exp(posterior_sample), max=.05)
+        torch.clamp(torch.exp(posterior_sample)/1000, max=.05)
         # torch.clamp(posterior_sample, min=1e-5, max=.05)
     )
-    
+
     model_trace = pyro.poutine.trace(
         pyro.poutine.condition(model, data=conditioning_dict)
     ).get_trace()
     model_logprob = model_trace.log_prob_sum()
 
-    prior_logprob = prior_dist.log_prob(torch.exp(posterior_sample))
+    prior_logprob = prior_dist.log_prob(torch.exp(posterior_sample)/1000)
 
     return (model_logprob + prior_logprob - posterior_logprob).squeeze()
 
@@ -357,6 +357,34 @@ def train(
     def elbo_loss():
         loss = torch.tensor(0.0).to(device)
 
+        for name, subsample in tqdm(subsamples.items(), leave=False):
+
+            model = subsample["model"]
+            num_flights = subsample["num_flights"]
+            visibility = subsample["visibility"]
+            
+            # TODO: assing label based on weather, states, idk
+            prior_label = wt.assign_label(visibility)
+            guide_label = ct.assign_label(visibility, num_flights)
+
+            # print(prior_label, guide_label)
+
+            prior_dist = PriorMixture(prior_label)
+            guide_dist = guide(guide_label)
+
+            subsample_loss = objective(
+                model, guide_dist, prior_dist, device, 1
+            ) 
+            # print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
+
+            loss += subsample_loss / len(subsamples)
+
+        return loss
+    
+    def elbo_loss_mp():
+        # loss = torch.tensor(0.0).to(device)
+        args = []
+
         for name, subsample in subsamples.items():
 
             model = subsample["model"]
@@ -367,50 +395,39 @@ def train(
             prior_label = wt.assign_label(visibility)
             guide_label = ct.assign_label(visibility, num_flights)
 
-            print(prior_label, guide_label)
+            # print(prior_label, guide_label)
 
             prior_dist = PriorMixture(prior_label)
             guide_dist = guide(guide_label)
 
-            subsample_loss = objective(
-                model, guide_dist, prior_dist, device, 1
-            ) 
-            print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
+            args.append((model, guide_dist, prior_dist, device, 1))
+            # print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
 
-            loss += subsample_loss / len(subsamples)
-
+        losses = Pool().starmap(objective, args)
+        loss = sum(losses) / len(subsamples)
         return loss
-    
-    loss = elbo_loss()
-    
-    return
-
-
-
-
-    return
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
     lrd = gamma ** (1 / svi_steps)
 
-    optimizer = torch.optim.Adam(
-        _guide.parameters(),
+    guide_optimizer = torch.optim.Adam(
+        guide.parameters(),
         lr=svi_lr,
         weight_decay=0.0, # fix this
     )
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=svi_steps, gamma=gamma
+    guide_scheduler = torch.optim.lr_scheduler.StepLR(
+        guide_optimizer, step_size=svi_steps, gamma=gamma
     )
 
     run_name = f"[{','.join(network_airport_codes)}]_"
-    run_name += f"[{prior_type},{prior_scale:.2f},{posterior_guide}]_"
-    run_name += f"[{','.join(days.strftime('%Y-%m-%d').to_list())}]"
+    run_name += f"[{posterior_guide}]_"
+    run_name += f"[{day_strs_list[0][0]}-{day_strs_list[-1][0]}]"
     # print(run_name)
-    group_name = f"{prior_type}-{prior_scale:.2f}-{posterior_guide}"
+    group_name = f"{posterior_guide}"
     # print(group_name)
     # TODO: fix this for non-day-by-day???
-    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{'_'.join(days.strftime('%Y-%m-%d').to_list())}/{prior_type}_{prior_scale:.2f}_{posterior_guide}/"
+    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{day_strs_list[0][0]}-{day_strs_list[-1][0]}/{posterior_guide}/"
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
@@ -423,11 +440,10 @@ def train(
         "svi_steps": svi_steps,
         "gamma": gamma,
         "n_samples": n_samples,
-        "do_mle": do_mle,
         "n_elbo_particles": n_elbo_particles,
 
-        "prior_type": prior_type,
-        "prior_scale": prior_scale,
+        # "prior_type": prior_type,
+        # "prior_scale": prior_scale,
         "posterior_guide": posterior_guide,
     }
     
@@ -439,92 +455,80 @@ def train(
     )
 
     losses = []
-    losses_from_prior = []
 
-    if not multiprocess:
-        pbar = tqdm(range(svi_steps))
-    else:
-        if prior_type == "failure":
-            color = (255, 100, 100)
-        elif prior_type == "nominal":
-            color = (100, 100, 255)
-        else:
-            color = (200, 200, 200)
-        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
-        pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
 
+    pbar = tqdm(range(svi_steps))
 
     for i in pbar:
-        optimizer.zero_grad()
-        loss = objective_fn(model, _guide(torch.tensor([0.0]).to(device)), states, device, 1)
+        guide_optimizer.zero_grad()
+        # loss = elbo_loss()
+        loss = elbo_loss_mp()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            _guide.parameters(), 100.0 # TODO :grad clip param
+            guide.parameters(), 100.0 # TODO :grad clip param
         )
-        optimizer.step()
-        scheduler.step()
-        # hidden.detach_()
+        guide_optimizer.step()
+        guide_scheduler.step()
 
         loss = loss.detach()
-
         losses.append(loss)
 
-        posterior_samples = torch.exp(guide.sample((n_samples,)))
+        # posterior_samples = torch.exp(guide.sample((n_samples,)))
 
-        z_samples = [posterior_samples[:,t_idx] for t_idx in range(mst_split)]
-        mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
+        # z_samples = [posterior_samples[:,t_idx] for t_idx in range(mst_split)]
+        # mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
 
-        elbo_from_prior = (
-            sum([
-                -mst_prior.log_prob(z_sample)
-                .mean().item() 
-                for z_sample in z_samples
-            ]) #/ len(z_samples)
-            * mst_prior_weight
-        )
-        losses_from_prior.append(elbo_from_prior)
-
-        desc = f"ELBO loss: {loss:.2f}, mst mles: "
-        desc += ", ".join([f'{mst_mle:.5f}' for mst_mle in mst_mles])
-        if not multiprocess:
-            pbar.set_description(desc)
+        desc = f"ELBO loss: {loss:.2f}"
                 
         if i % plot_every == 0 or i == svi_steps - 1:
+            labels = [torch.tensor([a, b]).to(device) for a in (0.0, 1.0) for b in (0.0, 1.0)]
+            for label in labels:
+                fig = plt.figure()
+                samples = torch.exp(guide(label).sample((n_samples,))/1000)
+                sns.histplot(
+                    samples, 
+                    color='b', 
+                    alpha=.5, 
+                    fill=True, 
+                    edgecolor='k', 
+                    linewidth=0
+                )
+                wandb.log({f"posteriors/{label.numpy()}": wandb.Image(fig)}, commit=False)
+                plt.close(fig)
+            
 
-            # hourly_delays = get_hourly_delays(
-            #     model, guide, states, observations_df, 1
-            # )
+        #     # hourly_delays = get_hourly_delays(
+        #     #     model, guide, states, observations_df, 1
+        #     # )
 
-            # fig = plot_hourly_delays(hourly_delays)
-            # wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
-            # plt.close(fig)
+        #     # fig = plot_hourly_delays(hourly_delays)
+        #     # wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
+        #     # plt.close(fig)
 
-            # plotting_dict = {
-            #     "mean service times": plot_service_times,
-            # }
+        #     # plotting_dict = {
+        #     #     "mean service times": plot_service_times,
+        #     # }
         
-            # for name, plot_func in plotting_dict.items():
-            #     # for now require this common signature
-            #     fig = plot_func(guide, states, n_samples)
-            #     wandb.log({name: wandb.Image(fig)}, commit=False)
-            #     plt.close(fig)
+        #     # for name, plot_func in plotting_dict.items():
+        #     #     # for now require this common signature
+        #     #     fig = plot_func(guide, states, n_samples)
+        #     #     wandb.log({name: wandb.Image(fig)}, commit=False)
+        #     #     plt.close(fig)
 
-            # Save the params and autoguide
-            dir_path = os.path.dirname(__file__)
-            # save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
-            save_path = os.path.join(dir_path, sub_dir, f"{i}")
-            os.makedirs(save_path, exist_ok=True)
-            pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
-            torch.save(_guide.state_dict(), os.path.join(save_path, "guide.pth"))
+        #     # Save the params and autoguide
+        #     dir_path = os.path.dirname(__file__)
+        #     # save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
+        #     save_path = os.path.join(dir_path, sub_dir, f"{i}")
+        #     os.makedirs(save_path, exist_ok=True)
+        #     pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
+        #     torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
         # wandb.log({"ELBO": loss})
         log_dict = {
             "ELBO/loss (units = nats per dim)": loss, 
-            "ELBO/loss (from prior component)": elbo_from_prior,
-            "ELBO/loss (from other component)": loss - elbo_from_prior,
         }
-        for i in range(len(mst_mles)):
-            log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
+        # for i in range(len(mst_mles)):
+        #     log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
         wandb.log(log_dict)
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
