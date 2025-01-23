@@ -36,12 +36,12 @@ from scripts.utils import (
 
 
 def plot_travel_times(
-    auto_guide, states, dt, n_samples, empirical_travel_times, wandb=True
+    auto_guide, states, n_samples, empirical_travel_times, wandb=True
 ):
     """Plot posterior samples of travel times."""
     # Sample nominal travel time estimates from the posterior
     with pyro.plate("samples", n_samples, dim=-1):
-        posterior_samples = auto_guide(states, dt)
+        posterior_samples = auto_guide(states)
 
     # Plot training curve and travel time posterior
     # airport_codes = states[0].airports.keys()
@@ -156,7 +156,7 @@ def handle_shared_ax_lims(
 
 def plot_time_indexed_network_var(
         base_var_name,
-        auto_guide, states, dt, n_samples,
+        auto_guide, states, n_samples,
         transform=(lambda x: x),
         plots_per_row=3,
         width=None,
@@ -171,7 +171,7 @@ def plot_time_indexed_network_var(
 
     # Sample mean service time estimates from the posterior
     with pyro.plate("samples", n_samples, dim=-1):
-        posterior_samples = auto_guide(states, dt)
+        posterior_samples = auto_guide(states)
 
     # Make subplots for each airport
     airport_codes = states[0].network_state.airports.keys()
@@ -310,12 +310,12 @@ def plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs):
 
 
 def get_arrival_departures_rmses(
-    model, auto_guide, states, dt, 
+    model, auto_guide, states, 
     observations_df, n_samples, wandb=True
 ):
     
     with pyro.plate("samples", n_samples, dim=-1):
-        posterior_samples = auto_guide(states, dt)
+        posterior_samples = auto_guide(states)
 
     predictive = pyro.infer.Predictive(
         model=model,
@@ -323,13 +323,13 @@ def get_arrival_departures_rmses(
     )
 
     samples = predictive(
-        states, dt, 
+        states, 
         obs_none=True,
     )
 
     # trace_pred = pyro.infer.TracePredictive(
     #     model, svi, num_samples=n_samples
-    # ).run(states, dt)
+    # ).run(states)
     
     # samples = trace_pred()
 
@@ -622,12 +622,12 @@ def get_arrival_departures_rmses(
 
 
 def get_hourly_delays(
-    model, auto_guide, states, dt, 
+    model, auto_guide, states, 
     observations_df, n_samples, wandb=True
 ):
     
     with pyro.plate("samples", n_samples, dim=-1):
-        posterior_samples = auto_guide(states, dt)
+        posterior_samples = auto_guide(states)
 
     predictive = pyro.infer.Predictive(
         model=model,
@@ -635,7 +635,7 @@ def get_hourly_delays(
     )
 
     samples = predictive(
-        states, dt, 
+        states, 
         obs_none=True,
     )
 
@@ -652,7 +652,7 @@ def get_hourly_delays(
 
     # trace_pred = pyro.infer.TracePredictive(
     #     model, svi, num_samples=n_samples
-    # ).run(states, dt)
+    # ).run(states)
     
     # samples = trace_pred()
 
@@ -974,6 +974,17 @@ def make_states(data, network_airport_codes):
 
 # TODO: deal with all of the above
 
+
+def asdf(model, states):
+
+    model_trace = pyro.poutine.trace(model).get_trace(states)
+    model_logprob = model_trace.log_prob_sum()
+
+    exit()
+
+    return model_logprob
+
+
 def train(
     project,
     network_airport_codes, 
@@ -1081,6 +1092,7 @@ def train(
         # include_cancellations=True,
         include_cancellations=False,
         mean_service_time_effective_hrs=mst_effective_hrs,
+        delta_t=dt,
 
         source_use_actual_departure_time=True,
         # source_use_actual_late_aircraft_delay=True,
@@ -1097,6 +1109,8 @@ def train(
 
     # re-scale ELBO
     model = pyro.poutine.scale(model, scale=model_scale)
+
+    asdf(model, states)
 
 
     # Create an autoguide for the model
@@ -1120,7 +1134,7 @@ def train(
         guide = pyro.infer.autoguide.AutoLaplaceApproximation(model, init_loc_fn=init_loc_fn)
     else:
         raise ValueError
-    # print(guide(states, dt))
+    # print(guide(states))
 
 
     # Set up SVI
@@ -1170,11 +1184,11 @@ def train(
 
     pbar = tqdm(range(svi_steps))
     for i in pbar:
-        loss = svi.step(states, dt)
+        loss = svi.step(states)
         losses.append(loss)
 
         with pyro.plate("samples", n_samples, dim=-1):
-            posterior_samples = guide(states, dt)
+            posterior_samples = guide(states)
         z_samples = [posterior_samples[f'LGA_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
         mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
 
@@ -1195,7 +1209,7 @@ def train(
         if i % plot_every == 0 or i == svi_steps - 1:
 
             hourly_delays = get_hourly_delays(
-                model, guide, states, dt, observations_df, 1
+                model, guide, states, observations_df, 1
             )
 
             fig = plot_hourly_delays(hourly_delays)
@@ -1208,7 +1222,7 @@ def train(
         
             for name, plot_func in plotting_dict.items():
                 # for now require this common signature
-                fig = plot_func(guide, states, dt, n_samples)
+                fig = plot_func(guide, states, n_samples)
                 wandb.log({name: wandb.Image(fig)}, commit=False)
                 plt.close(fig)
 
@@ -1237,8 +1251,8 @@ def train(
         'guide': guide,
         'states': states,
         'dt': dt,
-        # 'set_model': functools.partial(model, states, dt),
-        # 'set_guide': functools.partial(guide, states, dt),
+        # 'set_model': functools.partial(model, states),
+        # 'set_guide': functools.partial(guide, states),
         'run_name': run_name,
         'group_name': group_name,
         'config': wandb_init_config_dict
