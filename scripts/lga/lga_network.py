@@ -1275,6 +1275,8 @@ def train(
     with open(os.path.join(save_path, "output_dict.pkl"), 'wb+') as handle:
         dill.dump(output_dict, handle)
 
+    wandb.finish(0)
+
     return loss
 
 
