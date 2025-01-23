@@ -1234,7 +1234,7 @@ def train(
         else:
             color = (200, 200, 200)
         # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
-        pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\nprocess {pbars.id()}', color=color)
+        pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
 
     
     for i in pbar:
@@ -1351,9 +1351,9 @@ import warnings
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 
-
 @click.option("--prior-type", default="empty", help="nominal/failure/empty")
-@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace") # delta and laplace break plots rn 
+@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace") 
+# delta and laplace break plots rn 
 @click.option("--prior-scale", default=0.0, type=float)
 # empty: 2 (each guide)
 # nominal: 4 (each guide, two scale levels)
@@ -1369,7 +1369,7 @@ import warnings
 @click.option("--learn-together", is_flag=True)
 @click.option("--all-combos", is_flag=True)
 
-@click.option("--multiprocess", is_flag=True)
+@click.option("--multiprocess/--no-multiprocess", default=True)
 @click.option("--processes", default=None)
 @click.option("--wandb-silent", is_flag=True)
 
@@ -1395,7 +1395,7 @@ def train_cmd(
     #     if d not in nominal_days
     # ] 
 
-    if wandb_silent:
+    if wandb_silent or multiprocess:
         os.environ["WANDB_SILENT"] = "true"
     # else:
     #     os.environ["WANDB_SILENT"] = "false"
