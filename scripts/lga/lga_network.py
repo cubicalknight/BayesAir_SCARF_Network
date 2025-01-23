@@ -1294,7 +1294,7 @@ import warnings
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-6")
+@click.option("--project", default="bayes-air-atrds-attempt-7")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -1390,9 +1390,12 @@ def train_cmd(
 
 
     if empty_only:
+        # ppp_params = [
+        #     ("empty", default_zero_scale, pguide)
+        #     for pguide in ("gaussian", "iafnormal")
+        # ]
         ppp_params = [
-            ("empty", default_zero_scale, pguide)
-            for pguide in ("gaussian", "iafnormal")
+            ("empty", default_zero_scale, "gaussian")
         ]
     elif all_combos:
         ppp_params += [
