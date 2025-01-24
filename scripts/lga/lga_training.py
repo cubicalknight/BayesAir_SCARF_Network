@@ -194,6 +194,8 @@ def train(
     processed_ceiling = pd.read_csv(dir_path / 'processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
 
+    checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
+    model_logprobs_dir = dir_path / "model_logprobs"
 
     # SETTING UP THE MODEL AND STUFF
 
@@ -249,6 +251,17 @@ def train(
         # by default, scale ELBO down by num flights
         model_scale = 1.0 / (num_flights)
         model = pyro.poutine.scale(model, scale=model_scale)
+
+        with open(checkpoints_dir / f'{name}/empty_0.00_gaussian/final/output_dict.pkl', 'rb') as f:
+            s_guide_output_dict = dill.load(f)
+        
+        with open(model_logprobs_dir / f'{"_".join(name.split("-")[:2])}_output_dict.pkl') as f:
+            model_logprobs_output_dict = dill.load(f)
+
+        print(s_guide_output_dict.keys(), s_guide_output_dict)
+        print(model_logprobs_output_dict.keys(), model_logprobs_output_dict)
+
+        return
 
         subsamples[name] = {
             # "states": states,
