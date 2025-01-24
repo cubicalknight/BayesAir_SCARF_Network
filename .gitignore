@@ -172,3 +172,5 @@ data/bts_*/*_yearly/*
 
 data/bts_*/*_decade/*
 !data/bts_remapped/*_decade/parquet
+
+cached_*/
