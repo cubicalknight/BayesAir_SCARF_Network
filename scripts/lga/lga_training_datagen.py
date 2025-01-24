@@ -267,18 +267,18 @@ def train(
     # mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .005, .030, device)
     mst_prior_default = _gamma_dist_from_mean_std(.0135, .0050, device)
 
-    fig = plt.figure()
-    s = mst_prior_nominal.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-    s = mst_prior_failure.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-    plt.savefig('ab_test.png')
-    s = mst_prior_default.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-    plt.legend()
-    plt.title("prior distributions example")
-    plt.savefig('abc_test.png')
-    plt.close(fig)
+    # fig = plt.figure()
+    # s = mst_prior_nominal.sample((10000,)).detach().cpu()
+    # sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    # s = mst_prior_failure.sample((10000,)).detach().cpu()
+    # sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    # plt.savefig('ab_test.png')
+    # s = mst_prior_default.sample((10000,)).detach().cpu()
+    # sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    # plt.legend()
+    # plt.title("prior distributions example")
+    # plt.savefig('abc_test.png')
+    # plt.close(fig)
     
     failure_prior = mst_prior_failure
     nominal_prior = mst_prior_nominal
@@ -289,21 +289,21 @@ def train(
     def process_subsamples(subsample):
             
         model = subsample["model"]
-        output_dict[subsample["name"]] = torch.zeros((40,), requires_grad=False)
+        output_dict[subsample["name"]] = torch.zeros((30,), requires_grad=False)
 
         # pbar = tqdm.tqdm(np.arange(.001, .041, .001), leave=False)
-        for zi in range(1, 41):
+        for zi in tqdm.tqdm(range(10, 41)):
             z = zi / 1000.0
             tz = torch.tensor(z, requires_grad=False).to(device)
             l = single_particle_y_given_z(model, tz)
             pf = failure_prior.log_prob(tz)
             pn = nominal_prior.log_prob(tz)
-            print(f'{subsample["name"]} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
-            output_dict[subsample["name"]][zi-1] = l
+            print(f'\n{subsample["name"]} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
+            output_dict[subsample["name"]][zi-10] = l
         
         print(output_dict[subsample["name"]])
 
-    for name, subsample in subsamples.items():
+    for name, subsample in tqdm.tqdm(subsamples.items()):
         process_subsamples(subsample)
 
     dir_path = os.path.dirname(__file__)
@@ -347,8 +347,8 @@ def train(
 @click.command()
 @click.option("--day-strs", default=None)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
-@click.option("--year", default=None)
-@click.option("--month", default=None)
+@click.option("--year", default=None, type=int)
+@click.option("--month", default=None, type=int)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 
