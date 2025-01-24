@@ -310,7 +310,7 @@ def train(
     save_path = os.path.join(dir_path, "model_logprobs")
     os.makedirs(save_path, exist_ok=True)
     fname = (
-        f"{year}_{month}_output_dict.pkl" 
+        f"{year:04d}_{month:02d}_output_dict.pkl" 
         if year is not None and month is not None else
         f"output_dict.pkl" 
     )
@@ -325,13 +325,13 @@ def train(
     df = pd.DataFrame.from_dict(list_dict,orient='index').transpose()
     print(df)
     fname = (
-        f"{year}_{month}_output.csv" 
+        f"{year:04d}_{month:02d}_output.csv" 
         if year is not None and month is not None else
         f"output.csv" 
     )
     df.to_csv(os.path.join(save_path, fname), index=False)
     fname = (
-        f"{year}_{month}_output.parquet" 
+        f"{year:04d}_{month:02d}_output.parquet" 
         if year is not None and month is not None else
         f"output.parquet"
     )
