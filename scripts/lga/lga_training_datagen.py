@@ -292,7 +292,7 @@ def train(
         output_dict[subsample["name"]] = torch.zeros((30,), requires_grad=False)
 
         # pbar = tqdm.tqdm(np.arange(.001, .041, .001), leave=False)
-        for zi in tqdm.tqdm(range(10, 41)):
+        for zi in tqdm.tqdm(range(10, 40)):
             z = zi / 1000.0
             tz = torch.tensor(z, requires_grad=False).to(device)
             l = single_particle_y_given_z(model, tz)
