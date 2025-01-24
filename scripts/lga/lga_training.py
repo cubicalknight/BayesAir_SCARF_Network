@@ -60,87 +60,10 @@ plot_service_times = functools.partial(
 )
 
 
-def single_particle_model_log_prob(model, states):
-
-    # TODO: if we had more time should vectorize the model but ugh
-    # with pyro.plate("samples", 10, dim=-1):
-    model_trace = pyro.poutine.trace(model).get_trace(states)
-    model_logprob = model_trace.log_prob_sum()
-
-    return model_logprob
-
-def model_log_prob(model, states, device, num_particles=1):
-    """
-    this is like p(y|z;c) i think
-    """
-
-    model_log_prob = torch.tensor(0.0, device=device)
-
-    for _ in range(num_particles):
-        model_log_prob += single_particle_model_log_prob(model, states) 
-    model_log_prob /= num_particles
-
-    return model_log_prob
-
-def map_to_sample_sites_exp(sample):
-    return {'LGA_0_mean_service_time': torch.exp(sample)}
 
 def map_to_sample_sites_identity(sample):
     return {'LGA_0_mean_service_time': sample}
 
-
-def single_particle_elbo(model, guide_dist, states):
-    posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
-
-    conditioning_dict = map_to_sample_sites_exp(posterior_sample)
-    model_trace = pyro.poutine.trace(
-        pyro.poutine.condition(model, data=conditioning_dict)
-    ).get_trace(
-        states=states
-    )
-
-    model_logprob = model_trace.log_prob_sum()
-    return model_logprob - posterior_logprob
-
-def objective_fn(model, guide_dist, states, device, n_elbo_particles=1):
-    """ELBO loss for the air traffic problem."""
-    elbo = torch.tensor(0.0).to(device)
-    for _ in range(n_elbo_particles):
-        elbo += single_particle_elbo(model, guide_dist, states) / n_elbo_particles
-    # we already scale in the model?
-    return -elbo
-
-
-
-
-def single_particle_objective(model, guide_dist, prior_dist):
-    """
-    log p(y|z) + log p(z;c) - log q(z|y;c)
-    """
-    posterior_sample, posterior_logprob = guide_dist.rsample_and_log_prob()
-
-    conditioning_dict = map_to_sample_sites_identity(
-        torch.clamp(torch.exp(posterior_sample)/1000, max=.05)
-        # torch.clamp(posterior_sample, min=1e-5, max=.05)
-    )
-
-    model_trace = pyro.poutine.trace(
-        pyro.poutine.condition(model, data=conditioning_dict)
-    ).get_trace()
-    model_logprob = model_trace.log_prob_sum()
-
-    prior_logprob = prior_dist.log_prob(torch.exp(posterior_sample)/1000)
-
-    return (model_logprob + prior_logprob - posterior_logprob).squeeze()
-
-
-def objective(model, guide_dist, prior_dist, device, n_particles=1):
-    """ELBO loss for the air traffic problem."""
-    elbo = torch.tensor(0.0).to(device)
-    for _ in range(n_particles):
-        elbo += single_particle_objective(model, guide_dist, prior_dist) / n_particles
-    # we already scale in the model?
-    return -elbo
 
 
 def single_particle_y_given_z(model, sample):
@@ -232,6 +155,10 @@ def train(
                 data, network_airport_codes
             ) 
         states = make_states(data, network_airport_codes)
+        # with open(dir_path / f'extras/cached_travel_times_dict/{name}.pkl', 'rb') as f:
+        #     travel_times_dict = dill.load(f)
+        # with open(dir_path / f'extras/cached_states/{name}.pkl', 'rb') as f:
+        #     states = dill.load(f)
 
         # set up common model arguments
         model = functools.partial(
@@ -283,7 +210,7 @@ def train(
         return logprob # i think technically this is  abit off but whatever just approx for now.
     
     # now define guide
-    n_context = 1
+    n_context = 2
     hidden_dim = 2
     if posterior_guide == "nsf":
        guide = zuko.flows.NSF(
@@ -343,8 +270,8 @@ def train(
             return
         def log_prob(self, sample, label):
             return (
-                    (label) * self.failure_prior.log_prob(sample) 
-                + (1-label) * self.nominal_prior.log_prob(sample)
+                (label) * self.failure_prior.log_prob(sample) + 
+                (1-label) * self.nominal_prior.log_prob(sample)
             )
         
     class WeatherThreshold(torch.nn.Module):
@@ -353,36 +280,35 @@ def train(
             super().__init__()
             self.device = device
             self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(2.5).to(device),
+                torch.tensor(3.0).to(device),
                 requires_grad=True
             )
             self.ceiling_threshold = torch.nn.Parameter(
                 torch.tensor(1.0).to(device), # scale by 1k
                 requires_grad=True
             )
-            # self.ceiling_threshold = torch.nn.Parameter()
             self.a = torch.tensor(a).to(device)
 
         def assign_label(self, visibility, ceiling):
-            return torch.nn.functional.sigmoid(
-                self.a * (self.visibility_threshold - visibility)
+            return 1 - torch.nn.functional.sigmoid(
+                self.a * (visibility - self.visibility_threshold)
             ) * torch.nn.functional.sigmoid(
-                self.a * (self.ceiling_threshold - ceiling/1000.0)
+                self.a * (ceiling/1000.0 - self.ceiling_threshold)
             )
         
     class ClusterThreshold(torch.nn.Module):
 
-        def __init__(self, a):
+        def __init__(self, a, v=None, c=None):
             super().__init__()
             self.device = device
             self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(3.5).to(device),
+                torch.tensor(3.0).to(device),
                 requires_grad=True
-            )
+            ) if v is None else v
             self.ceiling_threshold = torch.nn.Parameter(
-                torch.tensor(2.0).to(device), # scale by 1k
+                torch.tensor(1.0).to(device), # scale by 1k
                 requires_grad=True
-            )
+            ) if c is None else c
             self.num_flights_threshold = torch.nn.Parameter(
                 torch.tensor(1.0).to(device), # scale by 1k
                 requires_grad=True
@@ -392,17 +318,19 @@ def train(
 
         def assign_label(self, visibility, ceiling, num_flights):
             return (
-                torch.nn.functional.sigmoid(
-                    self.a * (self.visibility_threshold - visibility)
-                ) * torch.nn.functional.sigmoid(
-                    self.a * (self.ceiling_threshold - ceiling/1000)
+                (
+                    1 - torch.nn.functional.sigmoid(
+                        self.a * (visibility - self.visibility_threshold)
+                    ) * torch.nn.functional.sigmoid(
+                        self.a * (ceiling/1000.0 - self.ceiling_threshold)
+                    )
                 ) * torch.nn.functional.sigmoid(
                     self.a * (num_flights/1000 - self.num_flights_threshold)
                 )
             ).unsqueeze(dim=-1)
         
-    weather_threshold = WeatherThreshold(50.0)
-    cluster_threshold = ClusterThreshold(50.0)
+    wt = WeatherThreshold(100.0)
+    ct = ClusterThreshold(100.0, wt.visibility_threshold, wt.ceiling_threshold)
 
     prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
@@ -414,8 +342,9 @@ def train(
         s_guide_dist = subsample["s_guide_dist"]
         model_logprobs = subsample["model_logprobs"]
 
-        prior_label = weather_threshold.assign_label(visibility, ceiling)
-        posterior_label = cluster_threshold.assign_label(visibility, ceiling, num_flights)
+        prior_label = wt.assign_label(visibility, ceiling)
+        flabel = ct.assign_label(visibility, ceiling, num_flights)
+        posterior_label = torch.cat((1-flabel, flabel))
 
         posterior_samples = guide(posterior_label).rsample((n,))
         posterior_logprobs = guide(posterior_label).log_prob(posterior_samples)
@@ -431,6 +360,13 @@ def train(
         objective = (
             s_logprobs + prior_logprobs - posterior_logprobs
         ).mean() - y_given_c_logprobs
+        
+        print(
+            prior_label.detach().numpy(), 
+            posterior_label.detach().numpy(), 
+            s_logprobs.item(), prior_logprobs.item(), 
+            posterior_logprobs.item(), y_given_c_logprobs.item()
+        )
 
         return -objective # negate to make it a loss
     
@@ -438,12 +374,10 @@ def train(
         loss = torch.tensor(0.0).to(device)
         for name, subsample in subsamples.items():
             loss += objective_fn(subsample, n)
-        return loss
+        return loss / len(subsamples)
     
-    loss = total_objective_fn(subsamples)
-    print(loss)
-
-    return
+    # loss = total_objective_fn(subsamples)
+    # print(loss)
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
@@ -459,7 +393,7 @@ def train(
     )
 
     wt_optimizer = torch.optim.Adam(
-        weather_threshold.parameters(),
+        wt.parameters(),
         lr=svi_lr,
         weight_decay=0.0, # fix this
     )
@@ -468,7 +402,7 @@ def train(
     )
 
     ct_optimizer = torch.optim.Adam(
-        cluster_threshold.parameters(),
+        ct.parameters(),
         lr=svi_lr,
         weight_decay=0.0, # fix this
     )
@@ -519,24 +453,27 @@ def train(
         wt_optimizer.zero_grad()
         ct_optimizer.zero_grad()
 
-        loss = total_objective_fn()
+        loss = total_objective_fn(subsamples,)
         loss.backward()
+
         guide_grad_norm = torch.nn.utils.clip_grad_norm_(
             guide.parameters(), 100.0 # TODO :grad clip param
         )
-        wt_grad_norm = torch.nn.utils.clip_grad_norm_(
-            weather_threshold.parameters(), 100.0 # TODO :grad clip param
-        )
-        ct_grad_norm = torch.nn.utils.clip_grad_norm_(
-            cluster_threshold.parameters(), 100.0 # TODO :grad clip param
-        )
-
         guide_optimizer.step()
         guide_scheduler.step()
+
+        wt_grad_norm = torch.nn.utils.clip_grad_norm_(
+            wt.parameters(), 10.0 # TODO :grad clip param
+        )
+        ct_grad_norm = torch.nn.utils.clip_grad_norm_(
+            ct.parameters(), 10.0 # TODO :grad clip param
+        )
         wt_optimizer.step()
         wt_scheduler.step()
         ct_optimizer.step()
         ct_scheduler.step()
+
+        ct.num_flights_threshold.data.clamp_(0.0, 1.1)
 
         loss = loss.detach()
         losses.append(loss)
@@ -546,24 +483,28 @@ def train(
         # z_samples = [posterior_samples[:,t_idx] for t_idx in range(mst_split)]
         # mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
 
-        desc = f"ELBO loss: {loss:.2f}"
+        desc = f"wt: v={wt.visibility_threshold.data.item():.4f}, c={wt.ceiling_threshold.data.item():.4f}; "
+        desc += f"ct: v={ct.visibility_threshold.data.item():.4f}, c={ct.ceiling_threshold.data.item():.4f}, n={ct.num_flights_threshold.data.item():.4f}; "
+        desc += f"loss: {loss:.2f}" 
+        pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
-            labels = [torch.tensor([a, b]).to(device) for a in (0.0, 1.0) for b in (0.0, 1.0)]
-            for label in labels:
-                fig = plt.figure()
-                samples = torch.exp(guide(label).sample((n_samples,)))/1000
+            labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
+            fig, ax = plt.subplots()
+            for label, color in zip(labels, ['b', 'r']):
+                samples = guide(label).sample((n_samples,))
                 sns.histplot(
                     samples, 
-                    color='b', 
+                    color=color, 
                     alpha=.5, 
                     fill=True, 
                     edgecolor='k', 
-                    linewidth=0
+                    linewidth=0,
+                    ax=ax,
                 )
-                plt.xlim(0,.050)
-                wandb.log({f"posteriors/{label.numpy()}": wandb.Image(fig)}, commit=False)
-                plt.close(fig)
+            plt.xlim(0,.040)
+            wandb.log({f"posteriors": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
             
 
         #     # hourly_delays = get_hourly_delays(
@@ -594,7 +535,12 @@ def train(
 
         # wandb.log({"ELBO": loss})
         log_dict = {
-            "ELBO/loss (units = nats per dim)": loss, 
+            "ELBO/loss (units = nats per dim)": loss.item(), 
+            "wt/visibility": wt.visibility_threshold.data.item(),
+            "wt/ceiling": wt.ceiling_threshold.data.item(),
+            "ct/visibility": ct.visibility_threshold.data.item(),
+            "ct/ceiling": ct.ceiling_threshold.data.item(),
+            "ct/num_flights": ct.num_flights_threshold.data.item(),
         }
         # for i in range(len(mst_mles)):
         #     log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
@@ -645,12 +591,12 @@ import warnings
 @click.option("--project", default="bayes-air-atrds-attempt-5")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
-@click.option("--svi-steps", default=500, help="Number of SVI steps to run")
-@click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
+@click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
+@click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
+@click.option("--svi-lr", default=1e-2, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
-@click.option("--gamma", default=.4) # was .1
+@click.option("--gamma", default=.1) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 
@@ -701,11 +647,16 @@ def train_cmd(
     network_airport_codes = network_airport_codes.split(',')
     if day_strs is not None:
         day_strs = day_strs.split(',')
-    elif year is not None and month is not None:
-        start_day = f'{year}-{month}-1'
-        days_in_month = pd.Period(start_day).days_in_month
-        end_day = f'{year}-{month}-{days_in_month}'
-        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
+    elif year is not None:
+        if month is not None:
+            start_day = f'{year}-{month}-1'
+            days_in_month = pd.Period(start_day).days_in_month
+            end_day = f'{year}-{month}-{days_in_month}'
+            day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
+        else:
+            start_day = f'{year}-1-1'
+            end_day = f'{year}-12-31'
+            day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
     elif start_day is not None:
         if end_day is None:
             end_day = start_day
