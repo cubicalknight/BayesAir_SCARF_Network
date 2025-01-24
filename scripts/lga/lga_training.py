@@ -24,7 +24,9 @@ from bayes_air.schedule import split_and_parse_full_schedule
 
 from tqdm import tqdm
 
-import pyro.distributions as dist
+# import pyro.distributions as dist
+import torch.distributions as dist
+
 from scripts.utils import (
     _affine_beta_dist_from_alpha_beta,
     _affine_beta_dist_from_mean_std,
@@ -198,8 +200,12 @@ def train(
     model_logprobs_dir = dir_path / "model_logprobs"
 
     # TODO: generalize!!
+    # with open(model_logprobs_dir / f'2018-2019_output_dict.pkl', 'rb') as f:
     with open(model_logprobs_dir / f'2019_07_output_dict.pkl', 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
+
+    with open(checkpoints_dir / '2019_s_guide_dist_dict.pkl', 'rb') as f:
+        s_guide_dist_dict = dill.load(f)
 
     # SETTING UP THE MODEL AND STUFF
 
@@ -210,7 +216,8 @@ def train(
 
     subsamples = {}
 
-    for day_strs in day_strs_list:
+    pbar = tqdm(day_strs_list)
+    for day_strs in pbar:
 
         # gather data
         days = pd.to_datetime(day_strs)
@@ -219,7 +226,7 @@ def train(
 
         num_days = len(days)
         num_flights = sum([len(df) for df in data.values()])
-        print(f"{name} -> days: {num_days}, flights: {num_flights}")
+        pbar.set_description(f"{name} -> days: {num_days}, flights: {num_flights}")
 
         # make things with the data
         travel_times_dict, observations_df = \
@@ -256,23 +263,6 @@ def train(
         model_scale = 1.0 / (num_flights)
         model = pyro.poutine.scale(model, scale=model_scale)
 
-        with open(checkpoints_dir / f'{name}/empty_0.00_gaussian/final/output_dict.pkl', 'rb') as f:
-            s_guide_output_dict = dill.load(f)
-        
-        s_guide = s_guide_output_dict["guide"]
-        with pyro.plate("samples", 10000, dim=-1):
-            posterior_samples = s_guide()
-        posterior_samples = posterior_samples["LGA_0_mean_service_time"]
-
-        mu = posterior_samples.mean().detach()
-        sigma = torch.std(posterior_samples).detach()
-        s_guide_dist = dist.Normal(mu, sigma)
-
-        print(s_guide_dist.sample((10,)).squeeze())
-        print(model_logprobs_output_dict[name])
-
-        return
-
         subsamples[name] = {
             # "states": states,
             # "travel_times_dict": travel_times_dict,
@@ -282,8 +272,8 @@ def train(
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
             
-            "s_guide_dist": None, # TODO: !!!
-            "model_logprobs": None, # TODO: !!!
+            "s_guide_dist": s_guide_dist_dict[name],
+            "model_logprobs": model_logprobs_output_dict[name],
         }
 
 
@@ -322,15 +312,12 @@ def train(
 
     # here, we make the nominal, failure, and uniform (not used) priors...
     # TODO: shifted gamma doesn't work. i have no idea why
-    # mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .010, .020, device)
-    # mst_prior_nominal = _gamma_dist_from_mean_std(.0125, .0004, device)
+
     mst_prior_nominal = dist.Normal(
         torch.tensor(.0125).to(device), 
         torch.tensor(.0004).to(device)
     )
 
-    # mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .010, .030, device)
-    # mst_prior_failure = _gamma_dist_from_mean_std(.0250, .0012, device)
     mst_prior_failure = dist.Normal(
         torch.tensor(.0190).to(device), 
         torch.tensor(.0012).to(device)
@@ -346,7 +333,6 @@ def train(
     plt.close(fig)
 
     return
-    
     
     # now define prior
     # TODO!!:
@@ -391,7 +377,6 @@ def train(
                 self.a * (self.ceiling_threshold - ceiling/1000.0)
             )
         
-
     class ClusterThreshold(torch.nn.Module):
 
         def __init__(self, a):
