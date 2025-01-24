@@ -191,6 +191,9 @@ def train(
 
     processed_visibility = pd.read_csv(dir_path / 'processed_visibility.csv')
     visibility_dict = dict(processed_visibility.values)
+    processed_ceiling = pd.read_csv(dir_path / 'processed_ceiling.csv')
+    ceiling_dict = dict(processed_ceiling.values)
+
 
     # SETTING UP THE MODEL AND STUFF
 
@@ -253,9 +256,46 @@ def train(
             # "observations_df": observations_df,
             "num_flights": num_flights,
             "model": model,
-            "visibility": visibility_dict[name]
+            "visibility": visibility_dict[name],
+            "ceiling": ceiling_dict[name],
+            
+            "s_guide_dist": None, # TODO: !!!
+            "model_logprobs": None, # TODO: !!!
         }
 
+
+    def y_given_c_log_prob(model_logprobs, prior_log_prob_fn):
+        # index i corresonds to .001*(1+i)
+        start_idx = 10
+        start_val = start_idx / 1000.0
+        samples = torch.arange(start_val, 0.040, 0.001).to(device)
+        model_logprobs = model_logprobs[start_idx:]
+        prior_logprobs = prior_log_prob_fn(samples)
+        logprob = torch.logsumexp(model_logprobs + prior_logprobs)
+        return logprob # i think technically this is  abit off but whatever just approx for now.
+    
+    # now define guide
+    n_context = 1
+    hidden_dim = 2
+    if posterior_guide == "nsf":
+       guide = zuko.flows.NSF(
+            features=mst_split,
+            context=n_context,
+            hidden_features=(hidden_dim, hidden_dim),
+        ).to(device)
+    elif posterior_guide == "cnf":
+        guide = zuko.flows.CNF(
+            features=mst_split,
+            context=n_context,
+            hidden_features=(hidden_dim, hidden_dim),
+        ).to(device)
+    elif posterior_guide == "gmm":
+        guide = ConditionalGaussianMixture(
+            n_context=n_context, 
+            n_features=mst_split,
+        )
+    else:
+        raise ValueError
 
     # here, we make the nominal, failure, and uniform (not used) priors...
     # TODO: shifted gamma doesn't work. i have no idea why
@@ -281,28 +321,6 @@ def train(
     plt.savefig('abc_test.png')
     plt.close(fig)
     
-
-    # now define guide
-    n_context = 2
-    if posterior_guide == "nsf":
-       guide = zuko.flows.NSF(
-            features=mst_split,
-            context=n_context,
-            hidden_features=(2, 2),
-        ).to(device)
-    elif posterior_guide == "cnf":
-        guide = zuko.flows.CNF(
-            features=mst_split,
-            context=n_context,
-            hidden_features=(2, 2),
-        ).to(device)
-    elif posterior_guide == "gmm":
-        guide = ConditionalGaussianMixture(
-            n_context=n_context, 
-            n_features=mst_split,
-        )
-    else:
-        raise ValueError
     
     # now define prior
     # TODO!!:
@@ -313,13 +331,15 @@ def train(
     failure_prior = mst_prior_failure
     nominal_prior = mst_prior_nominal
 
-    class PriorMixture():
-        def __init__(self, label):
-            self.label = label
-        def log_prob(self, sample):
+    class PriorMixture(object):
+        def __init__(self, failure_prior, nominal_prior):
+            self.failure_prior = failure_prior
+            self.nominal_prior = nominal_prior
+            return
+        def log_prob(self, sample, label):
             return (
-                (1-self.label) * failure_prior.log_prob(sample) 
-                + (self.label) * nominal_prior.log_prob(sample)
+                    (label) * self.failure_prior.log_prob(sample) 
+                + (1-label) * self.nominal_prior.log_prob(sample)
             )
         
     class WeatherThreshold(torch.nn.Module):
@@ -331,12 +351,18 @@ def train(
                 torch.tensor(2.5).to(device),
                 requires_grad=True
             )
+            self.ceiling_threshold = torch.nn.Parameter(
+                torch.tensor(1.0).to(device), # scale by 1k
+                requires_grad=True
+            )
             # self.ceiling_threshold = torch.nn.Parameter()
             self.a = torch.tensor(a).to(device)
 
-        def assign_label(self, visibility):
+        def assign_label(self, visibility, ceiling):
             return torch.nn.functional.sigmoid(
                 self.a * (self.visibility_threshold - visibility)
+            ) * torch.nn.functional.sigmoid(
+                self.a * (self.ceiling_threshold - ceiling/1000.0)
             )
         
 
@@ -349,61 +375,64 @@ def train(
                 torch.tensor(3.5).to(device),
                 requires_grad=True
             )
+            self.ceiling_threshold = torch.nn.Parameter(
+                torch.tensor(2.0).to(device), # scale by 1k
+                requires_grad=True
+            )
             self.num_flights_threshold = torch.nn.Parameter(
-                torch.tensor(900.0).to(device),
+                torch.tensor(0.9).to(device), # scale by 1k
                 requires_grad=True
             )
             # self.ceiling_threshold = torch.nn.Parameter()
             self.a = torch.tensor(a).to(device)
 
-        def assign_label(self, visibility, num_flights):
-            w = torch.nn.functional.sigmoid(
+        def assign_label(self, visibility, ceiling, num_flights):
+            return torch.nn.functional.sigmoid(
                 self.a * (self.visibility_threshold - visibility)
+            ) * torch.nn.functional.sigmoid(
+                self.a * (self.ceiling_threshold - ceiling/1000)
+            ) * torch.nn.functional.sigmoid(
+                self.a * (num_flights/1000 - self.num_flights_threshold)
             )
-            x = torch.nn.functional.sigmoid(
-                self.a * (num_flights - self.num_flights_threshold )
-            )
-            return torch.stack((w, x), dim=-1)
         
-    wt = WeatherThreshold(50.0)
-    ct = ClusterThreshold(50.0)
+    weather_threshold = WeatherThreshold(50.0)
+    cluster_threshold = ClusterThreshold(50.0)
 
-    def elbo_loss():
-        loss = torch.tensor(0.0).to(device)
+    prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
-        for name, subsample in tqdm(subsamples.items(), leave=False):
+    def objective_fn(subsample, n=1):
 
-            model = subsample["model"]
-            num_flights = subsample["num_flights"]
-            visibility = subsample["visibility"]
-            
-            # # TODO: assing label based on weather, states, idk
-            # prior_label = wt.assign_label(visibility)
-            # guide_label = ct.assign_label(visibility, num_flights)
+        visibility = subsample["visibility"]
+        ceiling = subsample["ceiling"]
+        num_flights = subsample["num_flights"]
+        s_guide_dist = subsample["s_guide_dist"]
+        model_logprobs = subsample["model_logprobs"]
 
-            # print(prior_label, guide_label)
+        prior_label = weather_threshold.assign_label(visibility, ceiling)
+        posterior_label = cluster_threshold.assign_label(visibility, ceiling, num_flights)
 
-            # prior_dist = PriorMixture(prior_label)
-            # guide_dist = guide(guide_label)
+        posterior_samples = guide(posterior_label).rsample((n,))
+        posterior_logprobs = guide(posterior_label).log_prob(posterior_samples)
 
-            # subsample_loss = objective(
-            #     model, guide_dist, prior_dist, device, 1
-            # ) 
-            # print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
+        s_logprobs = s_guide_dist.log_prob(posterior_samples)
+        prior_logprobs = prior_mixture.log_prob(posterior_samples, prior_label)
 
-            # loss += subsample_loss / len(subsamples)
-            for z in np.arange(.001, .041, .001):
-                tz = torch.tensor(z).to(device)
-                l = single_particle_y_given_z(model, tz)
-                pf = failure_prior.log_prob(tz)
-                pn = nominal_prior.log_prob(tz)
-                print(f'{name} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
+        y_given_c_logprobs = y_given_c_log_prob(
+            model_logprobs, 
+            functools.partial(prior_mixture.log_prob, label=prior_label)
+        )
 
-        return loss
+        objective = (
+            s_logprobs + prior_logprobs - posterior_logprobs
+        ).mean() - y_given_c_logprobs
 
-    elbo_loss()
-    return
+        return objective
     
+    def total_objective_fn(subsamples, n=1):
+        loss = torch.tensor(0.0).to(device)
+        for name, subsample in subsamples.items():
+            loss += objective_fn(subsample, n)
+        return loss
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
@@ -418,14 +447,32 @@ def train(
         guide_optimizer, step_size=svi_steps, gamma=gamma
     )
 
+    wt_optimizer = torch.optim.Adam(
+        weather_threshold.parameters(),
+        lr=svi_lr,
+        weight_decay=0.0, # fix this
+    )
+    wt_scheduler = torch.optim.lr_scheduler.StepLR(
+        wt_optimizer, step_size=svi_steps, gamma=gamma
+    )
+
+    ct_optimizer = torch.optim.Adam(
+        cluster_threshold.parameters(),
+        lr=svi_lr,
+        weight_decay=0.0, # fix this
+    )
+    ct_scheduler = torch.optim.lr_scheduler.StepLR(
+        ct_optimizer, step_size=svi_steps, gamma=gamma
+    )
+
     run_name = f"[{','.join(network_airport_codes)}]_"
     run_name += f"[{posterior_guide}]_"
-    run_name += f"[{day_strs_list[0][0]}-{day_strs_list[-1][0]}]"
+    run_name += f"[{day_strs_list[0][0]}_{day_strs_list[-1][0]}]"
     # print(run_name)
     group_name = f"{posterior_guide}"
     # print(group_name)
     # TODO: fix this for non-day-by-day???
-    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{day_strs_list[0][0]}-{day_strs_list[-1][0]}/{posterior_guide}/"
+    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{day_strs_list[0][0]}_{day_strs_list[-1][0]}/{posterior_guide}/"
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
@@ -454,19 +501,31 @@ def train(
 
     losses = []
 
-
     pbar = tqdm(range(svi_steps))
 
     for i in pbar:
         guide_optimizer.zero_grad()
-        loss = elbo_loss()
-        # loss = elbo_loss_mp()
+        wt_optimizer.zero_grad()
+        ct_optimizer.zero_grad()
+
+        loss = total_objective_fn()
         loss.backward()
         guide_grad_norm = torch.nn.utils.clip_grad_norm_(
             guide.parameters(), 100.0 # TODO :grad clip param
         )
+        wt_grad_norm = torch.nn.utils.clip_grad_norm_(
+            weather_threshold.parameters(), 100.0 # TODO :grad clip param
+        )
+        ct_grad_norm = torch.nn.utils.clip_grad_norm_(
+            cluster_threshold.parameters(), 100.0 # TODO :grad clip param
+        )
+
         guide_optimizer.step()
         guide_scheduler.step()
+        wt_optimizer.step()
+        wt_scheduler.step()
+        ct_optimizer.step()
+        ct_scheduler.step()
 
         loss = loss.detach()
         losses.append(loss)
