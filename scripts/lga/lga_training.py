@@ -196,15 +196,13 @@ def train(
     processed_ceiling = pd.read_csv(dir_path / 'processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
 
-    checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
-    model_logprobs_dir = dir_path / "model_logprobs"
+    # checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
+    # model_logprobs_dir = dir_path / "model_logprobs"
 
-    # TODO: generalize!!
-    # with open(model_logprobs_dir / f'2018-2019_output_dict.pkl', 'rb') as f:
-    with open(model_logprobs_dir / f'2019_07_output_dict.pkl', 'rb') as f:
+    with open(dir_path / f'extras/2018-2019_output_dict.pkl', 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
 
-    with open(checkpoints_dir / '2019_s_guide_dist_dict.pkl', 'rb') as f:
+    with open(dir_path / 'extras/2019_s_guide_dist_dict.pkl', 'rb') as f:
         s_guide_dist_dict = dill.load(f)
 
     # SETTING UP THE MODEL AND STUFF
@@ -278,13 +276,10 @@ def train(
 
 
     def y_given_c_log_prob(model_logprobs, prior_log_prob_fn):
-        # index i corresonds to .001*(1+i)
-        start_idx = 10
-        start_val = start_idx / 1000.0
-        samples = torch.arange(start_val, 0.040, 0.001).to(device)
-        model_logprobs = model_logprobs[start_idx:]
+        # index i corresonds to .001*(10+i) ?
+        samples = torch.arange(0.010, 0.040, 0.001).to(device)
         prior_logprobs = prior_log_prob_fn(samples)
-        logprob = torch.logsumexp(model_logprobs + prior_logprobs)
+        logprob = torch.logsumexp(model_logprobs + prior_logprobs, dim=-1)
         return logprob # i think technically this is  abit off but whatever just approx for now.
     
     # now define guide
@@ -331,8 +326,6 @@ def train(
     plt.savefig('ab_test.png')
     plt.legend()
     plt.close(fig)
-
-    return
     
     # now define prior
     # TODO!!:
@@ -391,20 +384,22 @@ def train(
                 requires_grad=True
             )
             self.num_flights_threshold = torch.nn.Parameter(
-                torch.tensor(0.9).to(device), # scale by 1k
+                torch.tensor(1.0).to(device), # scale by 1k
                 requires_grad=True
             )
             # self.ceiling_threshold = torch.nn.Parameter()
             self.a = torch.tensor(a).to(device)
 
         def assign_label(self, visibility, ceiling, num_flights):
-            return torch.nn.functional.sigmoid(
-                self.a * (self.visibility_threshold - visibility)
-            ) * torch.nn.functional.sigmoid(
-                self.a * (self.ceiling_threshold - ceiling/1000)
-            ) * torch.nn.functional.sigmoid(
-                self.a * (num_flights/1000 - self.num_flights_threshold)
-            )
+            return (
+                torch.nn.functional.sigmoid(
+                    self.a * (self.visibility_threshold - visibility)
+                ) * torch.nn.functional.sigmoid(
+                    self.a * (self.ceiling_threshold - ceiling/1000)
+                ) * torch.nn.functional.sigmoid(
+                    self.a * (num_flights/1000 - self.num_flights_threshold)
+                )
+            ).unsqueeze(dim=-1)
         
     weather_threshold = WeatherThreshold(50.0)
     cluster_threshold = ClusterThreshold(50.0)
@@ -437,13 +432,18 @@ def train(
             s_logprobs + prior_logprobs - posterior_logprobs
         ).mean() - y_given_c_logprobs
 
-        return objective
+        return -objective # negate to make it a loss
     
     def total_objective_fn(subsamples, n=1):
         loss = torch.tensor(0.0).to(device)
         for name, subsample in subsamples.items():
             loss += objective_fn(subsample, n)
         return loss
+    
+    loss = total_objective_fn(subsamples)
+    print(loss)
+
+    return
 
     # Set up SVI
     gamma = gamma  # final learning rate will be gamma * initial_lr
