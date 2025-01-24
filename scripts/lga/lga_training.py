@@ -300,13 +300,18 @@ def train(
     # here, we make the nominal, failure, and uniform (not used) priors...
     # TODO: shifted gamma doesn't work. i have no idea why
     # mst_prior_nominal = _affine_beta_dist_from_mean_std(.0125, .001, .010, .020, device)
-    mst_prior_nominal = _gamma_dist_from_mean_std(.0125, .0004, device)
+    # mst_prior_nominal = _gamma_dist_from_mean_std(.0125, .0004, device)
+    mst_prior_nominal = dist.Normal(
+        torch.tensor(.0125).to(device), 
+        torch.tensor(.0004).to(device)
+    )
 
     # mst_prior_failure = _affine_beta_dist_from_mean_std(.0200, .002, .010, .030, device)
-    mst_prior_failure = _gamma_dist_from_mean_std(.0250, .0012, device)
-
-    # mst_prior_default = _affine_beta_dist_from_alpha_beta(1.0, 1.0, .005, .030, device)
-    mst_prior_default = _gamma_dist_from_mean_std(.0135, .0050, device)
+    # mst_prior_failure = _gamma_dist_from_mean_std(.0250, .0012, device)
+    mst_prior_failure = dist.Normal(
+        torch.tensor(.0190).to(device), 
+        torch.tensor(.0012).to(device)
+    )
 
     fig = plt.figure()
     s = mst_prior_nominal.sample((10000,)).detach().cpu()
@@ -314,12 +319,10 @@ def train(
     s = mst_prior_failure.sample((10000,)).detach().cpu()
     sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
     plt.savefig('ab_test.png')
-    s = mst_prior_default.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='purple', alpha=.33, fill=True, label="empty", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
     plt.legend()
-    plt.title("prior distributions example")
-    plt.savefig('abc_test.png')
     plt.close(fig)
+
+    return
     
     
     # now define prior
@@ -650,8 +653,8 @@ import warnings
 
 @click.option("--day-strs", default=None)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
-@click.option("--year", default=None)
-@click.option("--month", default=None)
+@click.option("--year", default=None, type=int)
+@click.option("--month", default=None, type=int)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 
