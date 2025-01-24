@@ -197,6 +197,10 @@ def train(
     checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
     model_logprobs_dir = dir_path / "model_logprobs"
 
+    # TODO: generalize!!
+    with open(model_logprobs_dir / f'2019_07_output_dict.pkl', 'rb') as f:
+        model_logprobs_output_dict = dill.load(f)
+
     # SETTING UP THE MODEL AND STUFF
 
     # Hyperparameters
@@ -255,11 +259,17 @@ def train(
         with open(checkpoints_dir / f'{name}/empty_0.00_gaussian/final/output_dict.pkl', 'rb') as f:
             s_guide_output_dict = dill.load(f)
         
-        with open(model_logprobs_dir / f'{"_".join(name.split("-")[:2])}_output_dict.pkl') as f:
-            model_logprobs_output_dict = dill.load(f)
+        s_guide = s_guide_output_dict["guide"]
+        with pyro.plate("samples", 10000, dim=-1):
+            posterior_samples = s_guide()
+        posterior_samples = posterior_samples["LGA_0_mean_service_time"]
 
-        print(s_guide_output_dict.keys(), s_guide_output_dict)
-        print(model_logprobs_output_dict.keys(), model_logprobs_output_dict)
+        mu = posterior_samples.mean().detach()
+        sigma = torch.std(posterior_samples).detach()
+        s_guide_dist = dist.Normal(mu, sigma)
+
+        print(s_guide_dist.sample((10,)).squeeze())
+        print(model_logprobs_output_dict[name])
 
         return
 
