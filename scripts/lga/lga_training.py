@@ -141,6 +141,20 @@ def objective(model, guide_dist, prior_dist, device, n_particles=1):
     return -elbo
 
 
+def single_particle_y_given_z(model, sample):
+    """
+    log p(y|z)
+    """
+    conditioning_dict = map_to_sample_sites_identity(sample)
+
+    model_trace = pyro.poutine.trace(
+        pyro.poutine.condition(model, data=conditioning_dict)
+    ).get_trace()
+    model_logprob = model_trace.log_prob_sum()
+
+    return (model_logprob).squeeze()
+
+
 
 def train(
     project,
@@ -363,23 +377,32 @@ def train(
             num_flights = subsample["num_flights"]
             visibility = subsample["visibility"]
             
-            # TODO: assing label based on weather, states, idk
-            prior_label = wt.assign_label(visibility)
-            guide_label = ct.assign_label(visibility, num_flights)
+            # # TODO: assing label based on weather, states, idk
+            # prior_label = wt.assign_label(visibility)
+            # guide_label = ct.assign_label(visibility, num_flights)
 
             # print(prior_label, guide_label)
 
-            prior_dist = PriorMixture(prior_label)
-            guide_dist = guide(guide_label)
+            # prior_dist = PriorMixture(prior_label)
+            # guide_dist = guide(guide_label)
 
-            subsample_loss = objective(
-                model, guide_dist, prior_dist, device, 1
-            ) 
+            # subsample_loss = objective(
+            #     model, guide_dist, prior_dist, device, 1
+            # ) 
             # print(f'{name} {num_flights:04d} loss: {subsample_loss.item():.3f}')
 
-            loss += subsample_loss / len(subsamples)
+            # loss += subsample_loss / len(subsamples)
+            for z in np.arange(.001, .041, .001):
+                tz = torch.tensor(z).to(device)
+                l = single_particle_y_given_z(model, tz)
+                pf = failure_prior.log_prob(tz)
+                pn = nominal_prior.log_prob(tz)
+                print(f'{name} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
 
         return loss
+
+    elbo_loss()
+    return
     
 
     # Set up SVI
