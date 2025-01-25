@@ -65,19 +65,25 @@ def map_to_sample_sites_identity(sample):
     return {'LGA_0_mean_service_time': sample}
 
 
+a = .1
 
-def single_particle_y_given_z(model, sample):
-    """
-    log p(y|z)
-    """
-    conditioning_dict = map_to_sample_sites_identity(sample)
+def transform_sample(sample):
+    # return .02+.015*torch.tanh(a*sample)
+    return .004 * sample + .02
 
-    model_trace = pyro.poutine.trace(
-        pyro.poutine.condition(model, data=conditioning_dict)
-    ).get_trace()
-    model_logprob = model_trace.log_prob_sum()
 
-    return (model_logprob).squeeze()
+# def single_particle_y_given_z(model, sample):
+#     """
+#     log p(y|z)
+#     """
+#     conditioning_dict = map_to_sample_sites_identity(sample)
+
+#     model_trace = pyro.poutine.trace(
+#         pyro.poutine.condition(model, data=conditioning_dict)
+#     ).get_trace()
+#     model_logprob = model_trace.log_prob_sum()
+
+#     return (model_logprob).squeeze()
 
 
 
@@ -210,13 +216,14 @@ def train(
         return logprob # i think technically this is  abit off but whatever just approx for now.
     
     # now define guide
-    n_context = 2
+    n_context = 1
     hidden_dim = 2
     if posterior_guide == "nsf":
        guide = zuko.flows.NSF(
             features=mst_split,
             context=n_context,
             hidden_features=(hidden_dim, hidden_dim),
+            bins=2,
         ).to(device)
     elif posterior_guide == "cnf":
         guide = zuko.flows.CNF(
@@ -228,6 +235,8 @@ def train(
         guide = ConditionalGaussianMixture(
             n_context=n_context, 
             n_features=mst_split,
+            # means=torch.tensor([.015, .015, .015]).reshape(3,1).to(device),
+            # log_vars=torch.log(torch.tensor([.0001, .0001, .0001])).reshape(3,1).to(device),
         )
     else:
         raise ValueError
@@ -280,7 +289,7 @@ def train(
             super().__init__()
             self.device = device
             self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(3.0).to(device),
+                torch.tensor(2.0).to(device),
                 requires_grad=True
             )
             self.ceiling_threshold = torch.nn.Parameter(
@@ -302,7 +311,7 @@ def train(
             super().__init__()
             self.device = device
             self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(3.0).to(device),
+                torch.tensor(2.0).to(device),
                 requires_grad=True
             ) if v is None else v
             self.ceiling_threshold = torch.nn.Parameter(
@@ -329,8 +338,8 @@ def train(
                 )
             ).unsqueeze(dim=-1)
         
-    wt = WeatherThreshold(100.0)
-    ct = ClusterThreshold(100.0, wt.visibility_threshold, wt.ceiling_threshold)
+    wt = WeatherThreshold(50.0)
+    ct = ClusterThreshold(50.0)#, wt.visibility_threshold, wt.ceiling_threshold)
 
     prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
@@ -344,13 +353,15 @@ def train(
 
         prior_label = wt.assign_label(visibility, ceiling)
         flabel = ct.assign_label(visibility, ceiling, num_flights)
-        posterior_label = torch.cat((1-flabel, flabel))
+        # posterior_label = torch.cat((1-flabel, flabel))
+        posterior_label = flabel
 
         posterior_samples = guide(posterior_label).rsample((n,))
-        posterior_logprobs = guide(posterior_label).log_prob(posterior_samples)
+        posterior_logprobs = .1 * guide(posterior_label).log_prob(posterior_samples) \
+            # + transform_sample_deriv(posterior_samples)
 
-        s_logprobs = s_guide_dist.log_prob(posterior_samples)
-        prior_logprobs = prior_mixture.log_prob(posterior_samples, prior_label)
+        s_logprobs = 10*s_guide_dist.log_prob(transform_sample(posterior_samples))
+        prior_logprobs = prior_mixture.log_prob(transform_sample(posterior_samples), prior_label)
 
         y_given_c_logprobs = y_given_c_log_prob(
             model_logprobs, 
@@ -360,13 +371,13 @@ def train(
         objective = (
             s_logprobs + prior_logprobs - posterior_logprobs
         ).mean() - y_given_c_logprobs
-        
-        print(
-            prior_label.detach().numpy(), 
-            posterior_label.detach().numpy(), 
-            s_logprobs.item(), prior_logprobs.item(), 
-            posterior_logprobs.item(), y_given_c_logprobs.item()
-        )
+
+        # print(
+        #     prior_label.detach().numpy(), 
+        #     posterior_label.detach().numpy(), 
+        #     s_logprobs.item(), prior_logprobs.item(), 
+        #     posterior_logprobs.item(), y_given_c_logprobs.item()
+        # )
 
         return -objective # negate to make it a loss
     
@@ -456,27 +467,35 @@ def train(
         loss = total_objective_fn(subsamples,)
         loss.backward()
 
-        guide_grad_norm = torch.nn.utils.clip_grad_norm_(
-            guide.parameters(), 100.0 # TODO :grad clip param
-        )
-        guide_optimizer.step()
-        guide_scheduler.step()
+        if i < 200:
+            guide_grad_norm = torch.nn.utils.clip_grad_norm_(
+                guide.parameters(), 100.0 # TODO :grad clip param
+            )
+            guide_optimizer.step()
+            guide_scheduler.step()
 
-        wt_grad_norm = torch.nn.utils.clip_grad_norm_(
-            wt.parameters(), 10.0 # TODO :grad clip param
-        )
-        ct_grad_norm = torch.nn.utils.clip_grad_norm_(
-            ct.parameters(), 10.0 # TODO :grad clip param
-        )
-        wt_optimizer.step()
-        wt_scheduler.step()
-        ct_optimizer.step()
-        ct_scheduler.step()
+        else:
+            wt_grad_norm = torch.nn.utils.clip_grad_norm_(
+                wt.parameters(), 10.0 # TODO :grad clip param
+            )
+            ct_grad_norm = torch.nn.utils.clip_grad_norm_(
+                ct.parameters(), 10.0 # TODO :grad clip param
+            )
+            wt_optimizer.step()
+            wt_scheduler.step()
+            ct_optimizer.step()
+            ct_scheduler.step()
 
-        ct.num_flights_threshold.data.clamp_(0.0, 1.1)
+            ct.num_flights_threshold.data.clamp_(0.0, 1.1)
+            wt.ceiling_threshold.data.clamp_(0.1, 6.0)
+            wt.visibility_threshold.data.clamp_(0.1, 6.0)
+            ct.ceiling_threshold.data.clamp_(0.1, 6.0)
+            ct.visibility_threshold.data.clamp_(0.1, 6.0)
 
         loss = loss.detach()
         losses.append(loss)
+
+        # print(ct.visibility_threshold, ct.ceiling_threshold, ct.num_flights_threshold)
 
         # posterior_samples = torch.exp(guide.sample((n_samples,)))
 
@@ -489,20 +508,35 @@ def train(
         pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
-            labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
+            # labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
+            labels = [torch.tensor([a]).to(device) for a in (0.0, 1.0)]
             fig, ax = plt.subplots()
-            for label, color in zip(labels, ['b', 'r']):
-                samples = guide(label).sample((n_samples,))
-                sns.histplot(
-                    samples, 
-                    color=color, 
-                    alpha=.5, 
-                    fill=True, 
-                    edgecolor='k', 
-                    linewidth=0,
-                    ax=ax,
-                )
-            plt.xlim(0,.040)
+            # for label, color in zip(labels, ['b', 'r']):
+            samples = transform_sample(guide(labels[0]).sample((n_samples,)))
+            bins = np.arange(.005, .0352, .0002)
+            ax.hist(
+                samples, 
+                color='b', 
+                alpha=.5, 
+                fill=True, 
+                edgecolor='k', 
+                bins=bins,
+                linewidth=0,
+                label='nominal',
+            )
+            samples = transform_sample(guide(labels[1]).sample((n_samples,)))
+            ax.hist(
+                samples, 
+                color='r', 
+                alpha=.5, 
+                fill=True, 
+                edgecolor='k',
+                bins=bins,
+                linewidth=0,
+                label='failure',
+            )
+            plt.xlim(0.005,.035)
+            plt.legend()
             wandb.log({f"posteriors": wandb.Image(fig)}, commit=False)
             plt.close(fig)
             
@@ -533,7 +567,10 @@ def train(
         #     pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
         #     torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
-        # wandb.log({"ELBO": loss})
+        # labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
+        labels = [torch.tensor([a]).to(device) for a in (0.0, 1.0)]
+        samples = [transform_sample(guide(label).sample((n_samples,))).detach() for label in labels]
+
         log_dict = {
             "ELBO/loss (units = nats per dim)": loss.item(), 
             "wt/visibility": wt.visibility_threshold.data.item(),
@@ -541,6 +578,10 @@ def train(
             "ct/visibility": ct.visibility_threshold.data.item(),
             "ct/ceiling": ct.ceiling_threshold.data.item(),
             "ct/num_flights": ct.num_flights_threshold.data.item(),
+            "q/mean nominal": samples[0].mean().item(),
+            "q/mean failure": samples[1].mean().item(),
+            "q/std nominal": torch.std(samples[0]).item(),
+            "q/std failure": torch.std(samples[1]).item(),
         }
         # for i in range(len(mst_mles)):
         #     log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
