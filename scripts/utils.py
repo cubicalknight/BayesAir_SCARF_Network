@@ -180,13 +180,24 @@ class MixtureOfDiagNormals(dist.MixtureOfDiagNormals):
 
 
 class ConditionalGaussianMixture(LazyDistribution):
-    def __init__(self, n_context: int, n_features: int, means=None, log_vars=None):
+    def __init__(self, n_context: int, n_features: int, means=None, log_vars=None, no_exp=False):
         super().__init__()
         self.n_context = n_context
         self.n_features = n_features
 
-        self.means = torch.nn.Parameter(torch.randn(n_context + 1, n_features))
-        self.log_vars = torch.nn.Parameter(torch.randn(n_context + 1, n_features))
+        if means is None:
+            self.means = torch.nn.Parameter(0.015+0.01*torch.randn(n_context + 1, n_features))
+        else:
+            self.means = torch.nn.Parameter(means)
+        if log_vars is None:
+            self.log_vars = torch.nn.Parameter(-13.0-torch.randn(n_context + 1, n_features))
+        else:
+            self.log_vars = torch.nn.Parameter(log_vars)
+
+        # print(self.means.data)
+        # print(self.log_vars.data)
+
+        self.no_exp = no_exp
 
     def forward(self, c: Any = None) -> torch.distributions.Distribution:
         r"""
@@ -205,6 +216,9 @@ class ConditionalGaussianMixture(LazyDistribution):
         # Wherever the row is all zero, make just the first element 1
         zero_rows = c.sum(dim=-1) == 0
         c[zero_rows, 0] = 1.0
+
+        # print(self.log_vars)
+        # print(self.log_vars.sqrt())
 
         return MixtureOfDiagNormals(
             locs=self.means,
