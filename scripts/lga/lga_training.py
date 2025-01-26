@@ -467,30 +467,30 @@ def train(
         loss = total_objective_fn(subsamples,)
         loss.backward()
 
-        if i < 200:
-            guide_grad_norm = torch.nn.utils.clip_grad_norm_(
-                guide.parameters(), 100.0 # TODO :grad clip param
-            )
-            guide_optimizer.step()
-            guide_scheduler.step()
+        # if i < 200:
+        guide_grad_norm = torch.nn.utils.clip_grad_norm_(
+            guide.parameters(), 100.0 # TODO :grad clip param
+        )
+        guide_optimizer.step()
+        guide_scheduler.step()
 
-        else:
-            wt_grad_norm = torch.nn.utils.clip_grad_norm_(
-                wt.parameters(), 10.0 # TODO :grad clip param
-            )
-            ct_grad_norm = torch.nn.utils.clip_grad_norm_(
-                ct.parameters(), 10.0 # TODO :grad clip param
-            )
-            wt_optimizer.step()
-            wt_scheduler.step()
-            ct_optimizer.step()
-            ct_scheduler.step()
+    # else:
+        wt_grad_norm = torch.nn.utils.clip_grad_norm_(
+            wt.parameters(), 10.0 # TODO :grad clip param
+        )
+        ct_grad_norm = torch.nn.utils.clip_grad_norm_(
+            ct.parameters(), 10.0 # TODO :grad clip param
+        )
+        wt_optimizer.step()
+        wt_scheduler.step()
+        ct_optimizer.step()
+        ct_scheduler.step()
 
-            ct.num_flights_threshold.data.clamp_(0.0, 1.1)
-            wt.ceiling_threshold.data.clamp_(0.1, 6.0)
-            wt.visibility_threshold.data.clamp_(0.1, 6.0)
-            ct.ceiling_threshold.data.clamp_(0.1, 6.0)
-            ct.visibility_threshold.data.clamp_(0.1, 6.0)
+        ct.num_flights_threshold.data.clamp_(0.0, 1.1)
+        wt.ceiling_threshold.data.clamp_(0.1, 6.0)
+        wt.visibility_threshold.data.clamp_(0.1, 6.0)
+        ct.ceiling_threshold.data.clamp_(0.1, 6.0)
+        ct.visibility_threshold.data.clamp_(0.1, 6.0)
 
         loss = loss.detach()
         losses.append(loss)
@@ -632,9 +632,9 @@ import warnings
 @click.option("--project", default="bayes-air-atrds-attempt-5")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
-@click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
+@click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=1e-2, help="Learning rate for SVI")
+@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
 @click.option("--gamma", default=.1) # was .1
