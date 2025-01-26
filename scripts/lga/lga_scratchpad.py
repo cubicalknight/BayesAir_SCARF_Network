@@ -131,6 +131,6 @@ def deal_with_dataloader():
 
 
 if __name__ == '__main__':
-    deal_with_checkpoints()
-    # deal_with_model_logprobs()
+    # deal_with_checkpoints()
+    deal_with_model_logprobs(finer=True)
     # deal_with_dataloader()
