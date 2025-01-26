@@ -50,7 +50,7 @@ def deal_with_model_logprobs():
 def deal_with_checkpoints():
 
     checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
-    days = pd.date_range(start='2019-01-01', end='2019-12-31', freq='D').strftime('%Y-%m-%d').to_list()
+    days = pd.date_range(start='2018-01-01', end='2019-12-31', freq='D').strftime('%Y-%m-%d').to_list()
 
     s_guide_dist_dict = {}
     s_guide_dist_params_dict = {}
@@ -74,17 +74,17 @@ def deal_with_checkpoints():
         s_guide_dist_dict[name] = s_guide_dist
         s_guide_dist_params_dict[name] = (mu, sigma)
 
-    with open(dir_path / 'extras/2019_s_guide_dist_dict.pkl', 'wb+') as handle:
+    with open(dir_path / 'extras/2018-2019_s_guide_dist_dict.pkl', 'wb+') as handle:
         dill.dump(s_guide_dist_dict, handle)
 
-    with open(dir_path / 'extras/2019_s_guide_dist_params_dict.pkl', 'wb+') as handle:
+    with open(dir_path / 'extras/2018-2019_s_guide_dist_params_dict.pkl', 'wb+') as handle:
         dill.dump(s_guide_dist_params_dict, handle)
 
     df = pd.DataFrame(
         [(k,) + v for k,v in s_guide_dist_params_dict.items()], 
         columns=['date', 'mu', 'sigma']
     )
-    df.to_csv(dir_path / 'extras/2019_s_guide_dist_params.csv', index=False)
+    df.to_csv(dir_path / 'extras/2018-2019_s_guide_dist_params.csv', index=False)
     df.to_parquet(dir_path / 'extras/2019_s_guide_dist_params.parquet')
 
 
