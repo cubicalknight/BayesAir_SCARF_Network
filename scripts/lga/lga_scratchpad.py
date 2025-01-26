@@ -16,9 +16,13 @@ from scripts.lga.lga_network import (
 
 dir_path = Path(__file__).parent
 
-def deal_with_model_logprobs():
+def deal_with_model_logprobs(finer=False):
 
-    model_logprobs_dir = dir_path / "model_logprobs"
+    model_logprobs_dir = (
+        dir_path / "model_logprobs"
+        if not finer else
+        dir_path / "model_logprobs_finer"
+    )
 
     combined_output_dict = {}
 
@@ -38,10 +42,12 @@ def deal_with_model_logprobs():
 
     df = pd.concat(dfs, axis=1)
 
-    df.to_csv(dir_path / 'extras/2018-2019_output.csv', index=False)
-    df.to_parquet(dir_path / 'extras/2018-2019_output.parquet')
+    fname_base = '2018-2019_output' if not finer else '2018-2019_finer_output'
 
-    with open(dir_path / 'extras/2018-2019_output_dict.pkl', 'wb+') as handle:
+    df.to_csv(dir_path / f'extras/{fname_base}.csv', index=False)
+    df.to_parquet(dir_path / f'extras/{fname_base}.parquet')
+
+    with open(dir_path / f'extras/{fname_base}_dict.pkl', 'wb+') as handle:
         dill.dump(combined_output_dict, handle)
 
 
