@@ -289,17 +289,21 @@ def train(
     def process_subsamples(subsample):
             
         model = subsample["model"]
-        output_dict[subsample["name"]] = torch.zeros((30,), requires_grad=False)
+        # output_dict[subsample["name"]] = torch.zeros((30,), requires_grad=False)
+        output_dict[subsample["name"]] = torch.zeros((300,), requires_grad=False)
 
         # pbar = tqdm.tqdm(np.arange(.001, .041, .001), leave=False)
-        for zi in tqdm.tqdm(range(10, 40)):
-            z = zi / 1000.0
+        # for zi in tqdm.tqdm(range(10, 40)):
+        for zi in tqdm.tqdm(range(100, 400)):
+            z = zi / 10000.0
             tz = torch.tensor(z, requires_grad=False).to(device)
             l = single_particle_y_given_z(model, tz)
             pf = failure_prior.log_prob(tz)
             pn = nominal_prior.log_prob(tz)
-            print(f'\n{subsample["name"]} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
-            output_dict[subsample["name"]][zi-10] = l
+            # print(f'\n{subsample["name"]} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
+            print(f'\n{subsample["name"]} {z:.4f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
+            # output_dict[subsample["name"]][zi-10] = l
+            output_dict[subsample["name"]][zi-100] = l
         
         print(output_dict[subsample["name"]])
 
@@ -307,7 +311,8 @@ def train(
         process_subsamples(subsample)
 
     dir_path = os.path.dirname(__file__)
-    save_path = os.path.join(dir_path, "model_logprobs")
+    # save_path = os.path.join(dir_path, "model_logprobs")
+    save_path = os.path.join(dir_path, "model_logprobs_finer")
     os.makedirs(save_path, exist_ok=True)
     fname = (
         f"{year:04d}_{month:02d}_output_dict.pkl" 
