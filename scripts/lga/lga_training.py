@@ -554,13 +554,25 @@ def train(
             wandb.log({f"posteriors": wandb.Image(fig)}, commit=False)
             plt.close(fig)
 
-        #     # Save the params and autoguide
-        #     dir_path = os.path.dirname(__file__)
-        #     # save_path = os.path.join(dir_path, "checkpoints_final", run_name, f"{i}")
-        #     save_path = os.path.join(dir_path, sub_dir, f"{i}")
-        #     os.makedirs(save_path, exist_ok=True)
-        #     pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
-        #     torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
+            # Save the params and autoguide
+            dir_path = os.path.dirname(__file__)
+            save_path = os.path.join(dir_path, sub_dir, f"{i}")
+            os.makedirs(save_path, exist_ok=True)
+            # torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
+            torch.save(
+                {
+                    "guide": guide.state_dict(),
+                    "wt": wt.state_dict(),
+                    "ct": ct.state_dict(),
+                    "wt_vt": wt.visibility_threshold.data.item(),
+                    "wt_ct": wt.ceiling_threshold.data.item(),
+                    "ct_vt": ct.visibility_threshold.data.item(),
+                    "ct_ct": ct.ceiling_threshold.data.item(),
+                    "y_th": y_threshold,
+                    "x_th": x_threshold,
+                },
+                f"checkpoints/{run_name}/failure_checkpoint_{i}.pt",
+            )
 
         # labels = [torch.tensor([a,b,c]).to(device) for a in (0.0,1.0) for b in (0.0,1.0) for c in (0.0,1.0)]
         # names = [(a,b,c) for a in (0,1) for b in (0,1) for c in (0,1)]
@@ -582,12 +594,7 @@ def train(
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 
     output_dict = {
-        # 'model': model,
         'guide': guide,
-        # 'states': states,
-        # 'dt': dt,
-        # 'set_model': functools.partial(model, states),
-        # 'set_guide': functools.partial(guide, states),
         'run_name': run_name,
         'group_name': group_name,
         'config': wandb_init_config_dict
