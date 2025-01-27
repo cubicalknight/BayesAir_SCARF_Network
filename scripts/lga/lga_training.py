@@ -429,14 +429,15 @@ def train(
         ct_optimizer, step_size=svi_steps, gamma=gamma
     )
 
-    run_name = f"[{','.join(network_airport_codes)}]_"
-    run_name += f"[{posterior_guide}]_"
-    run_name += f"[{day_strs_list[0][0]}_{day_strs_list[-1][0]}]" # TODO: fix this
+    # run_name = f"[{','.join(network_airport_codes)}]_"
+    # run_name += f"[{posterior_guide}]_"
+    # run_name += f"[{day_strs_list[0][0]}_{day_strs_list[-1][0]}]" # TODO: fix this
+    run_name = f'{posterior_guide}_{len(subsamples)}'
     # print(run_name)
-    group_name = f"{posterior_guide}"
+    group_name = f"{len(subsamples)}"
     # print(group_name)
     # TODO: fix this for non-day-by-day???
-    sub_dir = f"{project}/checkpoints/{'_'.join(network_airport_codes)}/{day_strs_list[0][0]}_{day_strs_list[-1][0]}/{posterior_guide}/"
+    sub_dir = f"{project}/checkpoints/{run_name}/"
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
@@ -595,9 +596,20 @@ def train(
 
     output_dict = {
         'guide': guide,
+        'wt': wt,
+        'ct': ct,
         'run_name': run_name,
         'group_name': group_name,
-        'config': wandb_init_config_dict
+        'config': wandb_init_config_dict,
+        "guide_state_dict": guide.state_dict(),
+        "wt_state_dict": wt.state_dict(),
+        "ct_state_dict": ct.state_dict(),
+        "wt_vt": wt.visibility_threshold.data.item(),
+        "wt_ct": wt.ceiling_threshold.data.item(),
+        "ct_vt": ct.visibility_threshold.data.item(),
+        "ct_ct": ct.ceiling_threshold.data.item(),
+        "y_th": y_threshold,
+        "x_th": x_threshold,
     }
     # TODO: this is like not the best way of handling it but whatever
     # also maybe redundant but just in case i guess
@@ -622,7 +634,7 @@ import warnings
 @click.option("--project", default="bayes-air-atrds-attempt-8")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
-@click.option("--svi-steps", default=500, help="Number of SVI steps to run")
+@click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
 @click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
 @click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
