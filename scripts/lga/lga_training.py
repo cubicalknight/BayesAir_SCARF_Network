@@ -78,14 +78,15 @@ def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
 
 def _setup_guide(posterior_guide, mst_split, device):
     # now define guide
-    n_context = 1
-    hidden_dim = 2
+    n_context = 3
+    hidden_dim = 3
+    bins = 3
     if posterior_guide == "nsf":
        guide = zuko.flows.NSF(
             features=mst_split,
             context=n_context,
             hidden_features=(hidden_dim, hidden_dim),
-            bins=2,
+            bins=bins,
         ).to(device) #this is the only one that really works??
     elif posterior_guide == "cnf":
         guide = zuko.flows.CNF(
@@ -160,9 +161,9 @@ class ClusterThreshold(torch.nn.Module):
         self.x_threshold = x_threshold
         self.a = torch.tensor(a).to(device)
 
-    def assign_label(self, y, x, visibility, ceiling):
-        y_label = 1.0 if y > self.y_threshold else 0.0
-        x_label = 1.0 if x > self.x_threshold else 0.0
+    def assign_label(self, y_label, x_label, visibility, ceiling):
+        # y_label = 1.0 if y > self.y_threshold else 0.0
+        # x_label = 1.0 if x > self.x_threshold else 0.0
         w_label = (
             1 - torch.nn.functional.sigmoid(
                 self.a * (visibility - self.visibility_threshold)
@@ -170,6 +171,7 @@ class ClusterThreshold(torch.nn.Module):
                 self.a * (ceiling/1000.0 - self.ceiling_threshold)
             ),
         )
+        # TODO: should we split y,x into 4 separte as 1-hot ???
         return torch.cat(
             (y_label, x_label, w_label),
             axis=-1,
@@ -282,14 +284,20 @@ def train(
         model_scale = 1.0 / (num_flights)
         model = pyro.poutine.scale(model, scale=model_scale)
 
+        # TODO: fix this:
+        # y_label = 1.0 if y > y_threshold else 0.0
+        # x_label = 1.0 if x > x_threshold else 0.0
+
         subsamples[name] = {
             # "states": states,
             # "travel_times_dict": travel_times_dict,
             # "observations_df": observations_df,
             "num_flights": num_flights,
             "model": model,
-            "y": None, # TODO: !!!
-            "x": num_flights,
+            # "y": None, # TODO: !!!
+            # "x": num_flights,
+            "y_label": None, # TODO: !!!
+            "x_label": num_flights,
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
             "s_guide_dist": s_guide_dist_dict[name],
@@ -325,11 +333,11 @@ def train(
         s_guide_dist = subsample["s_guide_dist"]
         model_logprobs = subsample["model_logprobs"]
 
-        x = subsample["x"]
-        y = subsample["y"]
+        x_label = subsample["x_label"]
+        y_label = subsample["y_label"]
 
         prior_label = wt.assign_label(visibility, ceiling)
-        posterior_label = ct.assign_label(y, x, visibility, ceiling)
+        posterior_label = ct.assign_label(y_label, x_label, visibility, ceiling)
 
         posterior_samples = guide(posterior_label).rsample((n,))
         posterior_logprobs = .1 * guide(posterior_label).log_prob(posterior_samples) \
@@ -362,7 +370,6 @@ def train(
         return loss / len(subsamples)
     
 
-    
     guide_optimizer = torch.optim.Adam(
         guide.parameters(),
         lr=svi_lr,
@@ -411,10 +418,13 @@ def train(
         "gamma": gamma,
         "n_samples": n_samples,
         "n_elbo_particles": n_elbo_particles,
+        "finer": finer,
 
-        # "prior_type": prior_type,
-        # "prior_scale": prior_scale,
         "posterior_guide": posterior_guide,
+        "y_threshold": y_threshold,
+        "x_threshold": x_threshold,
+        "init_visibility_threshold": init_visibility_threshold,
+        "init_ceiling_threshold": init_ceiling_threshold,
     }
     
     wandb.init(
@@ -618,6 +628,9 @@ import warnings
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 
+@click.option("--auto-split", is_flag=True)
+@click.option("--auto-split-limit", default=None, type=int)
+
 def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
@@ -627,6 +640,7 @@ def train_cmd(
     y_threshold, x_threshold,
     init_visibility_threshold, init_ceiling_threshold,
     day_strs, year, month, start_day, end_day,
+    auto_split, auto_split_limit,
 ):
     
     network_airport_codes = network_airport_codes.split(',')
@@ -649,11 +663,15 @@ def train_cmd(
     else:
         raise ValueError
     
+    if auto_split:
+        pass
+        if auto_split_limit:
+            pass
+
     day_strs_list = [
         [day_str] for day_str in day_strs
     ]
     
-
     train(
         project,
         network_airport_codes,
