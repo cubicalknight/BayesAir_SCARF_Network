@@ -627,9 +627,12 @@ def get_hourly_delays(
     model, auto_guide, states, 
     observations_df, n_samples, wandb=True,
 ):
-    
     with pyro.plate("samples", n_samples, dim=-1):
         posterior_samples = auto_guide(states)
+    return get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb)
+    
+
+def get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb=True):
 
     predictive = pyro.infer.Predictive(
         model=model,
