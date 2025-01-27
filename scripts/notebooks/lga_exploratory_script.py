@@ -206,6 +206,6 @@ def plot_days(year, month):
     
 
 if __name__ == '__main__':
-    for year in tqdm(range(2018, 2019)):
-        for month in tqdm(range(1, 12)):
+    for year in tqdm(range(2018, 2020)):
+        for month in tqdm(range(1, 13)):
             plot_days(year, month)
