@@ -68,8 +68,11 @@ def transform_sample(sample):
     # return .02+.015*torch.tanh(a*sample)
     return .004 * sample + .02
 
-def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
-    # index i corresonds to .0001*(100+i) ?
+# def transform_sample_deriv(sample):
+#     return .004
+
+def y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
+    # index i corresonds to .0001*(100+i) ? if finer. otherwise x10 that
     if finer:
         samples = torch.arange(0.0100, 0.0400, 0.0001).to(device)
     else:
@@ -78,11 +81,11 @@ def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
     logprob = torch.logsumexp(model_logprobs + prior_logprobs, dim=-1)
     return logprob # i think technically this is  abit off but whatever just approx for now.
 
-def _setup_guide(posterior_guide, mst_split, device):
+def setup_guide(posterior_guide, mst_split, device):
     # now define guide
-    n_context = 3
-    hidden_dim = 3
-    bins = 3
+    n_context = 5
+    hidden_dim = 5
+    bins = 4
     if posterior_guide == "nsf":
        guide = zuko.flows.NSF(
             features=mst_split,
@@ -143,8 +146,8 @@ class WeatherThreshold(torch.nn.Module):
 class ClusterThreshold(torch.nn.Module):
     def __init__(
             self, a, device, 
-            y_threshold,
-            x_threshold,
+            # y_threshold,
+            # x_threshold,
             init_visibility_threshold, 
             init_ceiling_threshold, 
             v=None, c=None
@@ -159,8 +162,8 @@ class ClusterThreshold(torch.nn.Module):
             torch.tensor(init_ceiling_threshold).to(device), # scale by 1k
             requires_grad=True
         ) if c is None else c
-        self.y_threshold = y_threshold
-        self.x_threshold = x_threshold
+        # self.y_threshold = y_threshold
+        # self.x_threshold = x_threshold
         self.a = torch.tensor(a).to(device)
 
     def assign_label(self, y_label, x_label, visibility, ceiling):
@@ -171,13 +174,15 @@ class ClusterThreshold(torch.nn.Module):
                 self.a * (visibility - self.visibility_threshold)
             ) * torch.nn.functional.sigmoid(
                 self.a * (ceiling/1000.0 - self.ceiling_threshold)
-            ),
-        )
+            )
+        ).unsqueeze(dim=-1)
         # TODO: should we split y,x into 4 separte as 1-hot ???
-        return torch.cat(
-            (y_label, x_label, w_label),
+        label = torch.cat(
+            (torch.zeros(4), w_label),
             axis=-1,
         )
+        label[(y_label*2+x_label).long()] = 1.0
+        return label
 
 
 
@@ -218,12 +223,6 @@ def train(
     else:
         device = torch.device("cpu")
 
-    y_given_c_log_prob = functools.partial(
-        _y_given_c_log_prob,
-        device=device,
-        finer=finer,
-    )
-
     # Avoid plotting error . test
     matplotlib.use("Agg")
 
@@ -240,7 +239,11 @@ def train(
     processed_y = pd.read_csv(extras_path / 'y_event_delays.csv') # TODO: option
     y_dict = dict(processed_y.values)
 
-    with open(extras_path / f'2018-2019_finer_output_dict.pkl', 'rb') as f:
+    model_logprobs_name = (
+        '2018-2019_finer_output_dict.pkl' 
+        if finer else '2018-2019_output_dict.pkl'
+    )
+    with open(extras_path / model_logprobs_name, 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
 
     with open(extras_path / '2018-2019_s_guide_dist_dict.pkl', 'rb') as f:
@@ -249,8 +252,6 @@ def train(
     # SETTING UP THE MODEL AND STUFF
 
     # Hyperparameters
-    initial_aircraft = 50.0 # not used!
-    mst_effective_hrs = 24 # not used!
     mst_split = 1 # not really used
 
     subsamples = {}
@@ -279,8 +280,8 @@ def train(
             "y": y,
             "x": x,
             "yx_group": yx_group,
-            "y_label": torch.tensor(y_label).to(device),
-            "x_label": torch.tensor(x_label).to(device),
+            "y_label": torch.tensor([y_label]).to(device),
+            "x_label": torch.tensor([x_label]).to(device),
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
             "s_guide_dist": s_guide_dist,
@@ -313,7 +314,7 @@ def train(
                 tmp = {k: v for k, v in subsamples.items() if v["yx_group"] == group}
                 kvs = sorted(tmp.items(), key = lambda kv: kv[1]["z_mu"], reverse=(group[0]!=(0)))
                 yx_groups[group] = [kv[0] for kv in kvs[:lim]]
-                # print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
+                print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
 
         # print(yx_groups)
         # return
@@ -329,73 +330,28 @@ def train(
             if ','.join(day_strs) in valid_names
         ]
 
-    pbar = tqdm(day_strs_list)
-    for day_strs in pbar:
-
-        # gather data
-        days = pd.to_datetime(day_strs)
-        data = ba_dataloader.load_remapped_data_bts(days)
-        name = ", ".join(day_strs)
-
-        num_days = len(days)
-        num_flights = sum([len(df) for df in data.values()])
-        pbar.set_description(f"{name} -> days: {num_days}, flights: {num_flights}")
-
-        # make things with the data
-        travel_times_dict, observations_df = \
-            make_travel_times_dict_and_observation_df(
-                data, network_airport_codes
-            ) 
-        states = make_states(data, network_airport_codes)
-
-        # set up common model arguments
-        model = functools.partial(
-            augmented_air_traffic_network_model_simplified,
-            states=states,
-            travel_times_dict=travel_times_dict,
-            initial_aircraft=initial_aircraft,
-            # include_cancellations=True,
-            include_cancellations=False,
-            mean_service_time_effective_hrs=mst_effective_hrs,
-            delta_t=dt,
-            source_use_actual_departure_time=True,
-            source_use_actual_cancelled=False,
-            mst_prior_weight=1e-12, # effectively zero
-        )
-
-        # by default, scale ELBO down by num flights
-        model_scale = 1.0 / (num_flights)
-        model = pyro.poutine.scale(model, scale=model_scale)
-
-        subsamples[name]["num_flights"] = num_flights
-        subsamples[name]["num_days"] = num_days
-        subsamples[name]["model"] = model
-
-
     nominal_prior = dist.Normal(
         torch.tensor(.0120).to(device), 
         # torch.tensor(.0004).to(device)
-        torch.tensor(.002).to(device)
+        torch.tensor(.001).to(device)
     )
 
     failure_prior = dist.Normal(
         torch.tensor(.0190).to(device), 
         # torch.tensor(.0012).to(device)
-        torch.tensor(.002).to(device)
+        torch.tensor(.001).to(device)
     )
 
     plot_failure_nominal_prior(failure_prior, nominal_prior)
     prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
-    return
-
     # setup guide
-    guide = _setup_guide(posterior_guide, mst_split, device)
+    guide = setup_guide(posterior_guide, mst_split, device)
 
     wt = WeatherThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
     ct = ClusterThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
 
-    def objective_fn(subsample, n=1):
+    def objective_fn(subsample, n=1, posterior_scale=1, s_scale=1, prior_scale=1, yc_scale=1):
 
         visibility = subsample["visibility"]
         ceiling = subsample["ceiling"]
@@ -409,20 +365,24 @@ def train(
         posterior_label = ct.assign_label(y_label, x_label, visibility, ceiling)
 
         posterior_samples = guide(posterior_label).rsample((n,))
-        posterior_logprobs = .1 * guide(posterior_label).log_prob(posterior_samples) \
+        posterior_logprobs = guide(posterior_label).log_prob(posterior_samples) \
             # + transform_sample_deriv(posterior_samples)
 
-        s_logprobs = 10*s_guide_dist.log_prob(transform_sample(posterior_samples))
+        s_logprobs = s_guide_dist.log_prob(transform_sample(posterior_samples))
         prior_logprobs = prior_mixture.log_prob(transform_sample(posterior_samples), prior_label)
 
         y_given_c_logprobs = y_given_c_log_prob(
             model_logprobs, 
-            functools.partial(prior_mixture.log_prob, label=prior_label)
+            functools.partial(prior_mixture.log_prob, label=prior_label),
+            device,
+            finer=finer,
         )
 
         objective = (
-            s_logprobs + prior_logprobs - posterior_logprobs
-        ).mean() - y_given_c_logprobs
+            s_logprobs * s_scale 
+            - prior_logprobs * prior_scale 
+            - posterior_logprobs * posterior_scale
+        ).mean() + y_given_c_logprobs * yc_scale
 
         # print(
         #     prior_label.detach().numpy(), 
@@ -432,13 +392,12 @@ def train(
         # )
         return -objective # negate to make it a loss
     
-    def total_objective_fn(subsamples, n=1):
+    def total_objective_fn(subsamples, **kwargs):
         loss = torch.tensor(0.0).to(device)
         for _, subsample in subsamples.items():
-            loss += objective_fn(subsample, n)
+            loss += objective_fn(subsample, **kwargs)
         return loss / len(subsamples)
     
-
     guide_optimizer = torch.optim.Adam(
         guide.parameters(),
         lr=svi_lr,
@@ -477,9 +436,9 @@ def train(
 
     wandb_init_config_dict = {
         # "starting_aircraft": starting_aircraft,
-        "days": days,
-        "num_flights": num_flights,
-        "num_days": num_days,
+        "days": list(subsamples.keys()),
+        # "num_flights": sum([v['num_flights']]),
+        "num_days": len(subsamples),
 
         "dt": dt,
         "svi_lr": svi_lr,
@@ -507,12 +466,31 @@ def train(
 
     pbar = tqdm(range(svi_steps))
 
+    labels = []
+    names = []
+    for a in range(2):
+        for b in range(2):
+            for c in range(2):
+                label = torch.zeros(5, dtype=torch.float)
+                label[2*a+b] = 1.0
+                label[4] = c
+                labels.append(label)
+                names.append(f'{a}{b}{c}')
+
+    # kl_factor_start = 0.0
+    # kl_factor_end = 1.0
+    # kl_factor_schedule = torch.linspace(kl_factor_start, kl_factor_end, svi_steps).sqrt()
+
     for i in pbar:
         guide_optimizer.zero_grad()
         wt_optimizer.zero_grad()
         ct_optimizer.zero_grad()
 
-        loss = total_objective_fn(subsamples,)
+        loss = total_objective_fn(
+            subsamples,
+            # s_scale=kl_factor_schedule[i],
+            # posterior_scale=kl_factor_schedule[i],
+        )
         loss.backward()
 
         # if i < 200:
@@ -534,7 +512,6 @@ def train(
         ct_optimizer.step()
         ct_scheduler.step()
 
-        ct.num_flights_threshold.data.clamp_(0.0, 1.1)
         wt.ceiling_threshold.data.clamp_(0.0, 10.0)
         wt.visibility_threshold.data.clamp_(0.0, 10.0)
         ct.ceiling_threshold.data.clamp_(0.0, 10.0)
@@ -543,69 +520,33 @@ def train(
         loss = loss.detach()
         losses.append(loss)
 
-        # print(ct.visibility_threshold, ct.ceiling_threshold, ct.num_flights_threshold)
-
-        # posterior_samples = torch.exp(guide.sample((n_samples,)))
-
-        # z_samples = [posterior_samples[:,t_idx] for t_idx in range(mst_split)]
-        # mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
-
         desc = f"wt: v={wt.visibility_threshold.data.item():.4f}, c={wt.ceiling_threshold.data.item():.4f}; "
-        desc += f"ct: v={ct.visibility_threshold.data.item():.4f}, c={ct.ceiling_threshold.data.item():.4f}, n={ct.num_flights_threshold.data.item():.4f}; "
+        desc += f"ct: v={ct.visibility_threshold.data.item():.4f}, c={ct.ceiling_threshold.data.item():.4f}; "
         desc += f"loss: {loss:.2f}" 
         pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
-            # labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
-            labels = [torch.tensor([a]).to(device) for a in (0.0, 1.0)]
+                
             fig, ax = plt.subplots()
             # for label, color in zip(labels, ['b', 'r']):
-            samples = transform_sample(guide(labels[0]).sample((n_samples,)))
-            bins = np.arange(.005, .0352, .0002)
-            ax.hist(
-                samples, 
-                color='b', 
-                alpha=.5, 
-                fill=True, 
-                edgecolor='k', 
-                bins=bins,
-                linewidth=0,
-                label='nominal',
-            )
-            samples = transform_sample(guide(labels[1]).sample((n_samples,)))
-            ax.hist(
-                samples, 
-                color='r', 
-                alpha=.5, 
-                fill=True, 
-                edgecolor='k',
-                bins=bins,
-                linewidth=0,
-                label='failure',
-            )
+            bins = np.arange(.0050, .0351, .0001)
+            for label, name in zip(labels, names):
+                # print(label)
+                samples = transform_sample(guide(label).sample((n_samples,)))
+                ax.hist(
+                    samples, 
+                    # color='b', 
+                    alpha=.5, 
+                    fill=True, 
+                    edgecolor='k', 
+                    bins=bins,
+                    linewidth=0,
+                    label=f'{name}',
+                )
             plt.xlim(0.005,.035)
             plt.legend()
             wandb.log({f"posteriors": wandb.Image(fig)}, commit=False)
             plt.close(fig)
-            
-
-        #     # hourly_delays = get_hourly_delays(
-        #     #     model, guide, states, observations_df, 1
-        #     # )
-
-        #     # fig = plot_hourly_delays(hourly_delays)
-        #     # wandb.log({"Hourly delays": wandb.Image(fig)}, commit=False)
-        #     # plt.close(fig)
-
-        #     # plotting_dict = {
-        #     #     "mean service times": plot_service_times,
-        #     # }
-        
-        #     # for name, plot_func in plotting_dict.items():
-        #     #     # for now require this common signature
-        #     #     fig = plot_func(guide, states, n_samples)
-        #     #     wandb.log({name: wandb.Image(fig)}, commit=False)
-        #     #     plt.close(fig)
 
         #     # Save the params and autoguide
         #     dir_path = os.path.dirname(__file__)
@@ -615,8 +556,8 @@ def train(
         #     pyro.get_param_store().save(os.path.join(save_path, "params.pth"))
         #     torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
 
-        # labels = [torch.tensor([1-a, a]).to(device) for a in (0.0, 1.0)]
-        labels = [torch.tensor([a]).to(device) for a in (0.0, 1.0)]
+        # labels = [torch.tensor([a,b,c]).to(device) for a in (0.0,1.0) for b in (0.0,1.0) for c in (0.0,1.0)]
+        # names = [(a,b,c) for a in (0,1) for b in (0,1) for c in (0,1)]
         samples = [transform_sample(guide(label).sample((n_samples,))).detach() for label in labels]
 
         log_dict = {
@@ -625,23 +566,20 @@ def train(
             "wt/ceiling": wt.ceiling_threshold.data.item(),
             "ct/visibility": ct.visibility_threshold.data.item(),
             "ct/ceiling": ct.ceiling_threshold.data.item(),
-            "ct/num_flights": ct.num_flights_threshold.data.item(),
-            "q/mean nominal": samples[0].mean().item(),
-            "q/mean failure": samples[1].mean().item(),
-            "q/std nominal": torch.std(samples[0]).item(),
-            "q/std failure": torch.std(samples[1]).item(),
         }
-        # for i in range(len(mst_mles)):
-        #     log_dict[f"mean service time mle/{i} (hours)"] = mst_mles[i]
+        for label, sample, name in zip(labels, samples, names):
+            log_dict[f"q/{name}/mean"] = sample.mean().item()
+            log_dict[f"q/{name}/std"] = torch.std(sample).item()
+
         wandb.log(log_dict)
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
 
     output_dict = {
-        'model': model,
+        # 'model': model,
         'guide': guide,
-        'states': states,
-        'dt': dt,
+        # 'states': states,
+        # 'dt': dt,
         # 'set_model': functools.partial(model, states),
         # 'set_guide': functools.partial(guide, states),
         'run_name': run_name,
@@ -673,13 +611,13 @@ import warnings
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
+@click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
 @click.option("--gamma", default=.1) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
-@click.option("--finer", is_flag=True)
+@click.option("--finer/--no-finer", default=True)
 
 @click.option("--posterior-guide", default="nsf", help="nsf/cnf/gmm") 
 # TODO: weights for things in the objective
@@ -687,7 +625,7 @@ import warnings
 # thresholds: TODO
 @click.option("--y-threshold", default=0.5, type=float) # hours
 @click.option("--x-threshold", default=70.0, type=float)
-@click.option("--init-visibility-threshold", default=2.0, type=float) # hours
+@click.option("--init-visibility-threshold", default=1.5, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
 
 @click.option("--day-strs", default=None)
@@ -699,7 +637,7 @@ import warnings
 @click.option("--all-days", is_flag=True)
 
 @click.option("--auto-split", is_flag=True)
-@click.option("--auto-split-limit", default=10, type=int)
+@click.option("--auto-split-limit", default=20, type=int) # was 10
 @click.option("--auto-split-random", is_flag=True) 
 
 def train_cmd(
