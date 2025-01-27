@@ -499,12 +499,12 @@ def train(
         )
         loss.backward()
 
-        # if i < 200:
-        guide_grad_norm = torch.nn.utils.clip_grad_norm_(
-            guide.parameters(), 100.0 # TODO :grad clip param
-        )
-        guide_optimizer.step()
-        guide_scheduler.step()
+        if i < 500:
+            guide_grad_norm = torch.nn.utils.clip_grad_norm_(
+                guide.parameters(), 100.0 # TODO :grad clip param
+            )
+            guide_optimizer.step()
+            guide_scheduler.step()
 
     # else:
         wt_grad_norm = torch.nn.utils.clip_grad_norm_(
