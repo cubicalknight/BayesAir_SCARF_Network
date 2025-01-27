@@ -50,41 +50,11 @@ from scripts.lga.lga_network import (
     get_hourly_delays,
 )
 
-
-plot_service_times = functools.partial(
-    plot_time_indexed_network_var,
-    "mean_service_time",
-    plots_per_row=1,
-    transform=torch.exp,
-    xlim=(.005, .030) # new
-)
-
-
-
-def map_to_sample_sites_identity(sample):
-    return {'LGA_0_mean_service_time': sample}
-
-
 a = .1
 
 def transform_sample(sample):
     # return .02+.015*torch.tanh(a*sample)
     return .004 * sample + .02
-
-
-# def single_particle_y_given_z(model, sample):
-#     """
-#     log p(y|z)
-#     """
-#     conditioning_dict = map_to_sample_sites_identity(sample)
-
-#     model_trace = pyro.poutine.trace(
-#         pyro.poutine.condition(model, data=conditioning_dict)
-#     ).get_trace()
-#     model_logprob = model_trace.log_prob_sum()
-
-#     return (model_logprob).squeeze()
-
 
 
 def train(
@@ -119,19 +89,17 @@ def train(
     matplotlib.use("Agg")
 
     dir_path = Path(__file__).parent
+    extras_path = dir_path / 'extras'
 
-    processed_visibility = pd.read_csv(dir_path / 'processed_visibility.csv')
+    processed_visibility = pd.read_csv(extras_path / 'processed_visibility.csv')
     visibility_dict = dict(processed_visibility.values)
-    processed_ceiling = pd.read_csv(dir_path / 'processed_ceiling.csv')
+    processed_ceiling = pd.read_csv(extras_path / 'processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
 
-    # checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
-    # model_logprobs_dir = dir_path / "model_logprobs"
-
-    with open(dir_path / f'extras/2018-2019_output_dict.pkl', 'rb') as f:
+    with open(extras_path / f'2018-2019_finer_output_dict.pkl', 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
 
-    with open(dir_path / 'extras/2019_s_guide_dist_dict.pkl', 'rb') as f:
+    with open(extras_path / '2018-2019_s_guide_dist_dict.pkl', 'rb') as f:
         s_guide_dist_dict = dill.load(f)
 
     # SETTING UP THE MODEL AND STUFF
@@ -161,31 +129,18 @@ def train(
                 data, network_airport_codes
             ) 
         states = make_states(data, network_airport_codes)
-        # with open(dir_path / f'extras/cached_travel_times_dict/{name}.pkl', 'rb') as f:
-        #     travel_times_dict = dill.load(f)
-        # with open(dir_path / f'extras/cached_states/{name}.pkl', 'rb') as f:
-        #     states = dill.load(f)
 
         # set up common model arguments
         model = functools.partial(
             augmented_air_traffic_network_model_simplified,
-
             states=states,
-
             travel_times_dict=travel_times_dict,
             initial_aircraft=initial_aircraft,
-
             # include_cancellations=True,
             include_cancellations=False,
             mean_service_time_effective_hrs=mst_effective_hrs,
             delta_t=dt,
-
             source_use_actual_departure_time=True,
-            # source_use_actual_late_aircraft_delay=True,
-            # source_use_actual_carrier_delay=True,
-            # source_use_actual_security_delay=True,
-
-            # source_use_actual_cancelled=True,
             source_use_actual_cancelled=False,
             mst_prior_weight=1e-12, # effectively zero
         )
@@ -202,11 +157,9 @@ def train(
             "model": model,
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
-            
             "s_guide_dist": s_guide_dist_dict[name],
             "model_logprobs": model_logprobs_output_dict[name],
         }
-
 
     def y_given_c_log_prob(model_logprobs, prior_log_prob_fn):
         # index i corresonds to .001*(10+i) ?
@@ -640,8 +593,8 @@ import warnings
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0, type=int)
-@click.option("--x-threshold", default=0, type=int)
+@click.option("--y-threshold", default=0.15, type=int) # hours
+@click.option("--x-threshold", default=800, type=int)
 
 @click.option("--day-strs", default=None)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
@@ -656,6 +609,7 @@ def train_cmd(
     plot_every, rng_seed, 
     gamma, dt, n_elbo_particles,
     posterior_guide, 
+    y_threshold, x_threshold,
     day_strs, year, month, start_day, end_day,
 ):
     # TODO: make this better
