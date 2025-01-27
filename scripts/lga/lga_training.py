@@ -557,7 +557,7 @@ def train(
 
             # Save the params and autoguide
             dir_path = os.path.dirname(__file__)
-            save_path = os.path.join(dir_path, sub_dir, f"{i}")
+            save_path = os.path.join(dir_path, sub_dir)
             os.makedirs(save_path, exist_ok=True)
             # torch.save(guide.state_dict(), os.path.join(save_path, "guide.pth"))
             torch.save(
@@ -572,7 +572,8 @@ def train(
                     "y_th": y_threshold,
                     "x_th": x_threshold,
                 },
-                f"checkpoints/{run_name}/failure_checkpoint_{i}.pt",
+                # f"checkpoints/{run_name}/failure_checkpoint_{i}.pt",
+                os.path.join(dir_path, sub_dir, f'checkpoint_{i}.pt')
             )
 
         # labels = [torch.tensor([a,b,c]).to(device) for a in (0.0,1.0) for b in (0.0,1.0) for c in (0.0,1.0)]
