@@ -16,6 +16,7 @@ import dill
 import sys
 from pathlib import Path
 import random
+import itertools
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -312,10 +313,21 @@ def train(
                 tmp = {k: v for k, v in subsamples.items() if v["yx_group"] == group}
                 kvs = sorted(tmp.items(), key = lambda kv: kv[1]["z_mu"], reverse=(group[0]!=(0)))
                 yx_groups[group] = [kv[0] for kv in kvs[:lim]]
-                print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
+                # print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
 
-    print(yx_groups)
-    return
+        # print(yx_groups)
+        # return
+        valid_names = list(itertools.chain.from_iterable(yx_groups.values()))
+        
+        subsamples = {
+            k: v
+            for k, v in subsamples.items()
+            if k in valid_names
+        }
+        day_strs_list = [
+            day_strs for day_strs in day_strs_list
+            if ','.join(day_strs) in valid_names
+        ]
 
     pbar = tqdm(day_strs_list)
     for day_strs in pbar:
@@ -702,11 +714,7 @@ def train_cmd(
 ):
     
     network_airport_codes = network_airport_codes.split(',')
-    if all_days:
-        start_day = f'2018-1-1'
-        end_day = f'2019-12-31'
-        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
-    elif day_strs is not None:
+    if day_strs is not None:
         day_strs = day_strs.split(',')
     elif year is not None:
         if month is not None:
@@ -722,8 +730,10 @@ def train_cmd(
         if end_day is None:
             end_day = start_day
         day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
-    else:
-        raise ValueError
+    else: # basically all_days
+        start_day = f'2018-1-1'
+        end_day = f'2019-12-31'
+        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
     
     if auto_split:
         pass
