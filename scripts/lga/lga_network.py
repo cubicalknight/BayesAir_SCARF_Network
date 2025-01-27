@@ -1326,7 +1326,7 @@ import warnings
 @click.option("--empty-only", is_flag=True)
 
 @click.option("--multiprocess/--no-multiprocess", default=True)
-@click.option("--processes", default=None)
+@click.option("--processes", default=None, type=int)
 @click.option("--wandb-silent", is_flag=True)
 @click.option("--empty-only", is_flag=True)
 
