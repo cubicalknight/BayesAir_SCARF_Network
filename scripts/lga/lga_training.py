@@ -66,9 +66,12 @@ def transform_sample(sample):
     # return .02+.015*torch.tanh(a*sample)
     return .004 * sample + .02
 
-def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device):
+def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
     # index i corresonds to .0001*(100+i) ?
-    samples = torch.arange(0.0100, 0.0400, 0.0001).to(device)
+    if finer:
+        samples = torch.arange(0.0100, 0.0400, 0.0001).to(device)
+    else:
+        samples = torch.arange(0.010, 0.040, 0.001).to(device)
     prior_logprobs = prior_log_prob_fn(samples)
     logprob = torch.logsumexp(model_logprobs + prior_logprobs, dim=-1)
     return logprob # i think technically this is  abit off but whatever just approx for now.
@@ -197,6 +200,8 @@ def train(
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
+    torch.manual_seed(int(rng_seed))
+    np.random.seed(int(rng_seed))
 
     if use_gpu:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -206,7 +211,11 @@ def train(
     else:
         device = torch.device("cpu")
 
-    y_given_c_log_prob = functools.partial(_y_given_c_log_prob, device=device)
+    y_given_c_log_prob = functools.partial(
+        _y_given_c_log_prob,
+        device=device,
+        finer=finer,
+    )
 
     # Avoid plotting error . test
     matplotlib.use("Agg")
@@ -301,6 +310,7 @@ def train(
     )
 
     plot_failure_nominal_prior(failure_prior, nominal_prior)
+    prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
     # setup guide
     guide = _setup_guide(posterior_guide, mst_split, device)
@@ -308,20 +318,18 @@ def train(
     wt = WeatherThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
     ct = ClusterThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
 
-    prior_mixture = PriorMixture(failure_prior, nominal_prior)
-
     def objective_fn(subsample, n=1):
 
         visibility = subsample["visibility"]
         ceiling = subsample["ceiling"]
-        num_flights = subsample["num_flights"]
         s_guide_dist = subsample["s_guide_dist"]
         model_logprobs = subsample["model_logprobs"]
 
+        x = subsample["x"]
+        y = subsample["y"]
+
         prior_label = wt.assign_label(visibility, ceiling)
-        flabel = ct.assign_label(visibility, ceiling, num_flights)
-        # posterior_label = torch.cat((1-flabel, flabel))
-        posterior_label = flabel
+        posterior_label = ct.assign_label(y, x, visibility, ceiling)
 
         posterior_samples = guide(posterior_label).rsample((n,))
         posterior_logprobs = .1 * guide(posterior_label).log_prob(posterior_samples) \
@@ -345,22 +353,16 @@ def train(
         #     s_logprobs.item(), prior_logprobs.item(), 
         #     posterior_logprobs.item(), y_given_c_logprobs.item()
         # )
-
         return -objective # negate to make it a loss
     
     def total_objective_fn(subsamples, n=1):
         loss = torch.tensor(0.0).to(device)
-        for name, subsample in subsamples.items():
+        for _, subsample in subsamples.items():
             loss += objective_fn(subsample, n)
         return loss / len(subsamples)
     
-    # loss = total_objective_fn(subsamples)
-    # print(loss)
 
-    # Set up SVI
-    gamma = gamma  # final learning rate will be gamma * initial_lr
-    lrd = gamma ** (1 / svi_steps)
-
+    
     guide_optimizer = torch.optim.Adam(
         guide.parameters(),
         lr=svi_lr,
@@ -390,7 +392,7 @@ def train(
 
     run_name = f"[{','.join(network_airport_codes)}]_"
     run_name += f"[{posterior_guide}]_"
-    run_name += f"[{day_strs_list[0][0]}_{day_strs_list[-1][0]}]"
+    run_name += f"[{day_strs_list[0][0]}_{day_strs_list[-1][0]}]" # TODO: fix this
     # print(run_name)
     group_name = f"{posterior_guide}"
     # print(group_name)
