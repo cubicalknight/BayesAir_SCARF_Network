@@ -246,13 +246,17 @@ def train(
 
     mst_prior_nominal = dist.Normal(
         torch.tensor(.0125).to(device), 
-        torch.tensor(.0004).to(device)
+        # torch.tensor(.0004).to(device)
+        torch.tensor(.001).to(device)
     )
 
     mst_prior_failure = dist.Normal(
         torch.tensor(.0190).to(device), 
-        torch.tensor(.0012).to(device)
+        # torch.tensor(.0012).to(device)
+        torch.tensor(.003).to(device)
     )
+
+    return
 
     fig = plt.figure()
     s = mst_prior_nominal.sample((10000,)).detach().cpu()
@@ -487,10 +491,10 @@ def train(
         ct_scheduler.step()
 
         ct.num_flights_threshold.data.clamp_(0.0, 1.1)
-        wt.ceiling_threshold.data.clamp_(0.1, 6.0)
-        wt.visibility_threshold.data.clamp_(0.1, 6.0)
-        ct.ceiling_threshold.data.clamp_(0.1, 6.0)
-        ct.visibility_threshold.data.clamp_(0.1, 6.0)
+        wt.ceiling_threshold.data.clamp_(0.0, 10.0)
+        wt.visibility_threshold.data.clamp_(0.0, 10.0)
+        ct.ceiling_threshold.data.clamp_(0.0, 10.0)
+        ct.visibility_threshold.data.clamp_(0.0, 10.0)
 
         loss = loss.detach()
         losses.append(loss)
@@ -620,7 +624,7 @@ import warnings
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-5")
+@click.option("--project", default="bayes-air-atrds-attempt-8")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
@@ -632,10 +636,12 @@ import warnings
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 
-# @click.option("--prior-type", default="empty", help="nominal/failure/empty")
-@click.option("--posterior-guide", default="gaussian", help="gaussian/iafnormal/delta/laplace") 
-# # delta and laplace break plots rn 
-# @click.option("--prior-scale", default=0.0, type=float)
+@click.option("--posterior-guide", default="nsf", help="nsf/cnf/gmm") 
+# TODO: weights for things in the objective
+
+# thresholds: TODO
+@click.option("--y-threshold", default=0, type=int)
+@click.option("--x-threshold", default=0, type=int)
 
 @click.option("--day-strs", default=None)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
@@ -644,24 +650,13 @@ import warnings
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 
-# @click.option("--learn-together", is_flag=True)
-# @click.option("--all-combos", is_flag=True)
-
-# @click.option("--multiprocess/--no-multiprocess", default=True)
-# @click.option("--processes", default=None)
-# @click.option("--wandb-silent", is_flag=True)
-
-
 def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
-    plot_every, rng_seed, gamma, dt, n_elbo_particles,
-    # prior_type, prior_scale, 
+    plot_every, rng_seed, 
+    gamma, dt, n_elbo_particles,
     posterior_guide, 
     day_strs, year, month, start_day, end_day,
-    # learn_together, 
-    # all_combos, 
-    # multiprocess, processes, wandb_silent
 ):
     # TODO: make this better
 
