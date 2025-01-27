@@ -84,7 +84,7 @@ def y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device, finer=False):
 def setup_guide(posterior_guide, mst_split, device):
     # now define guide
     n_context = 5
-    hidden_dim = 5
+    hidden_dim = 16
     bins = 4
     if posterior_guide == "nsf":
        guide = zuko.flows.NSF(
@@ -314,7 +314,11 @@ def train(
                 tmp = {k: v for k, v in subsamples.items() if v["yx_group"] == group}
                 kvs = sorted(tmp.items(), key = lambda kv: kv[1]["z_mu"], reverse=(group[0]!=(0)))
                 yx_groups[group] = [kv[0] for kv in kvs[:lim]]
-                print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
+                print(
+                    group, 
+                    f"{len(names):03d}",
+                    f"{sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim:.6f}", 
+                    f"{sum([kv[1]['z_mu'] for kv in kvs])/len(kvs):.6f}")
 
         # print(yx_groups)
         # return
@@ -380,9 +384,9 @@ def train(
 
         objective = (
             s_logprobs * s_scale 
-            - prior_logprobs * prior_scale 
+            + prior_logprobs * prior_scale 
             - posterior_logprobs * posterior_scale
-        ).mean() + y_given_c_logprobs * yc_scale
+        ).mean() - y_given_c_logprobs * yc_scale
 
         # print(
         #     prior_label.detach().numpy(), 
@@ -490,6 +494,8 @@ def train(
             subsamples,
             # s_scale=kl_factor_schedule[i],
             # posterior_scale=kl_factor_schedule[i],
+            s_scale=2,
+            prior_scale=.2,
         )
         loss.backward()
 
@@ -568,8 +574,8 @@ def train(
             "ct/ceiling": ct.ceiling_threshold.data.item(),
         }
         for label, sample, name in zip(labels, samples, names):
-            log_dict[f"q/{name}/mean"] = sample.mean().item()
-            log_dict[f"q/{name}/std"] = torch.std(sample).item()
+            log_dict[f"q-mean/{name}"] = sample.mean().item()
+            log_dict[f"q-std/{name}"] = torch.std(sample).item()
 
         wandb.log(log_dict)
 
@@ -611,10 +617,10 @@ import warnings
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
-@click.option("--svi-lr", default=1e-3, help="Learning rate for SVI")
+@click.option("--svi-lr", default=5e-3, help="Learning rate for SVI")
 @click.option("--plot-every", default=50, help="Plot every N steps")
 @click.option("--rng-seed", default=1, type=int)
-@click.option("--gamma", default=.1) # was .1
+@click.option("--gamma", default=.2) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
 @click.option("--finer/--no-finer", default=True)
@@ -623,8 +629,8 @@ import warnings
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0.5, type=float) # hours
-@click.option("--x-threshold", default=70.0, type=float)
+@click.option("--y-threshold", default=0.25, type=float) # hours
+@click.option("--x-threshold", default=72.0, type=float)
 @click.option("--init-visibility-threshold", default=1.5, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
 
