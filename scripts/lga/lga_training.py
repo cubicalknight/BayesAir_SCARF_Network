@@ -371,22 +371,23 @@ def train(
         subsamples[name]["num_days"] = num_days
         subsamples[name]["model"] = model
 
-    return
 
     nominal_prior = dist.Normal(
-        torch.tensor(.0125).to(device), 
+        torch.tensor(.0120).to(device), 
         # torch.tensor(.0004).to(device)
-        torch.tensor(.001).to(device)
+        torch.tensor(.002).to(device)
     )
 
     failure_prior = dist.Normal(
         torch.tensor(.0190).to(device), 
         # torch.tensor(.0012).to(device)
-        torch.tensor(.003).to(device)
+        torch.tensor(.002).to(device)
     )
 
     plot_failure_nominal_prior(failure_prior, nominal_prior)
     prior_mixture = PriorMixture(failure_prior, nominal_prior)
+
+    return
 
     # setup guide
     guide = _setup_guide(posterior_guide, mst_split, device)
