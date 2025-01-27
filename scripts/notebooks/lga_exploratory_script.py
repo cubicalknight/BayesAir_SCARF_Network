@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import torch
-import tqdm
+from tqdm import tqdm
 
 import bayes_air.utils.dataloader as ba_dataloader
 # from bayes_air.model import augmented_air_traffic_network_model
