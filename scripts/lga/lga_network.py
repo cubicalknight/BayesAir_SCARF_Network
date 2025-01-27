@@ -632,7 +632,7 @@ def get_hourly_delays(
     return get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb)
     
 
-def get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb=True):
+def get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb=True, relu=True):
 
     predictive = pyro.infer.Predictive(
         model=model,
@@ -760,6 +760,10 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
         - arrival_delays_df["scheduled_arrival_time"]
     )
 
+    if relu:
+        arrival_delays_df["sample_arrival_delay"].clip(lower=0, inplace=True)
+        arrival_delays_df["actual_arrival_delay"].clip(lower=0, inplace=True)
+
     actual_arrival_hour = (
         np.floor(arrival_delays_df.actual_arrival_time).astype(int)
     )
@@ -798,6 +802,10 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
         departure_delays_df["actual_departure_time"] 
         - departure_delays_df["scheduled_departure_time"]
     )
+
+    if relu:
+        arrival_delays_df["sample_departure_delay"].clip(lower=0, inplace=True)
+        arrival_delays_df["actual_departure_delay"].clip(lower=0, inplace=True)
 
     actual_departure_hour = (
         np.floor(departure_delays_df.actual_departure_time).astype(int)
