@@ -15,6 +15,7 @@ import functools
 import dill
 import sys
 from pathlib import Path
+import random
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
@@ -197,6 +198,8 @@ def train(
     init_visibility_threshold,
     init_ceiling_threshold,
     day_strs_list,
+    auto_split,
+    auto_split_limit,
     use_gpu=False,
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
@@ -229,7 +232,11 @@ def train(
     visibility_dict = dict(processed_visibility.values)
     processed_ceiling = pd.read_csv(extras_path / 'processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
-    # TODO: load x and y data
+
+    processed_x = pd.read_csv(extras_path / 'x_capacity_counts.csv') # TODO: option
+    x_dict = dict(processed_x.values)
+    processed_y = pd.read_csv(extras_path / 'y_event_delays.csv') # TODO: option
+    y_dict = dict(processed_y.values)
 
     with open(extras_path / f'2018-2019_finer_output_dict.pkl', 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
@@ -245,6 +252,60 @@ def train(
     mst_split = 1 # not really used
 
     subsamples = {}
+
+    yx_groups = {
+        (i, j): []
+        for i in range(2)
+        for j in range(2)
+    }
+    
+    # first go and do the easy stuff
+    pbar = tqdm(day_strs_list)
+    for day_strs in pbar:
+        name = ", ".join(day_strs)
+        
+        y = y_dict[name]
+        x = x_dict[name]
+        y_label = 1.0 if y > y_threshold else 0.0
+        x_label = 1.0 if x > x_threshold else 0.0
+        yx_group = (int(y_label), int(x_label))
+        yx_groups[yx_group].append(name)
+
+        subsamples[name] = {
+            "y": y,
+            "x": x,
+            "y_label": torch.tensor(y_label).to(device),
+            "x_label": torch.tensor(x_label).to(device),
+            "visibility": visibility_dict[name],
+            "ceiling": ceiling_dict[name],
+            "s_guide_dist": s_guide_dist_dict[name],
+            "model_logprobs": model_logprobs_output_dict[name],
+        }
+
+        pbar.set_description(f"{name} -> yx_group = {yx_group}")
+
+    # for k, v in subsamples.items():
+    #     print(
+    #         k, 
+    #         int(v['y_label'].item()), 
+    #         int(v['x_label'].item()), 
+    #         f'{v["y"]:.3f}',
+    #         v['x'],
+    #     )
+    # print(yx_groups)
+
+    if auto_split:
+        for group, names in yx_groups.items():
+            lim = min(auto_split_limit, len(names))
+            if lim < auto_split_limit:
+                print(f"warning: group {group} has only {lim} samples, less than limit of {auto_split_limit}")
+            random.seed(rng_seed)
+            yx_groups[group] = random.sample(yx_groups[group], lim)
+
+    print(yx_groups)
+
+    return
+
 
     pbar = tqdm(day_strs_list)
     for day_strs in pbar:
@@ -284,26 +345,11 @@ def train(
         model_scale = 1.0 / (num_flights)
         model = pyro.poutine.scale(model, scale=model_scale)
 
-        # TODO: fix this:
-        # y_label = 1.0 if y > y_threshold else 0.0
-        # x_label = 1.0 if x > x_threshold else 0.0
+        subsamples[name]["num_flights"] = num_flights
+        subsamples[name]["num_days"] = num_days
+        subsamples[name]["model"] = model
 
-        subsamples[name] = {
-            # "states": states,
-            # "travel_times_dict": travel_times_dict,
-            # "observations_df": observations_df,
-            "num_flights": num_flights,
-            "model": model,
-            # "y": None, # TODO: !!!
-            # "x": num_flights,
-            "y_label": None, # TODO: !!!
-            "x_label": num_flights,
-            "visibility": visibility_dict[name],
-            "ceiling": ceiling_dict[name],
-            "s_guide_dist": s_guide_dist_dict[name],
-            "model_logprobs": model_logprobs_output_dict[name],
-        }
-    
+    return
 
     nominal_prior = dist.Normal(
         torch.tensor(.0125).to(device), 
@@ -617,7 +663,7 @@ import warnings
 
 # thresholds: TODO
 @click.option("--y-threshold", default=0.15, type=float) # hours
-@click.option("--x-threshold", default=800.0, type=float)
+@click.option("--x-threshold", default=70.0, type=float)
 @click.option("--init-visibility-threshold", default=2.0, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
 
@@ -629,7 +675,7 @@ import warnings
 @click.option("--end-day", default=None)
 
 @click.option("--auto-split", is_flag=True)
-@click.option("--auto-split-limit", default=None, type=int)
+@click.option("--auto-split-limit", default=10, type=int)
 
 def train_cmd(
     project, network_airport_codes, 
@@ -690,6 +736,8 @@ def train_cmd(
         init_visibility_threshold,
         init_ceiling_threshold,
         day_strs_list,
+        auto_split,
+        auto_split_limit,
     )
 
 
