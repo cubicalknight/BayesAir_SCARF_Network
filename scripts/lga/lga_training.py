@@ -615,15 +615,6 @@ def train(
     return loss
 
 
-from multiprocessing import Process, Pool, cpu_count
-# https://stackoverflow.com/questions/7207309/how-to-run-functions-in-parallel
-# trying something
-def run_cpu_tasks_in_parallel(tasks):
-    running_tasks = [Process(target=task) for task in tasks]
-    for running_task in running_tasks:
-        running_task.start()
-    for running_task in running_tasks:
-        running_task.join()
 
 import warnings
 
