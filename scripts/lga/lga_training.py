@@ -311,9 +311,10 @@ def train(
             else:
                 tmp = {k: v for k, v in subsamples.items() if v["yx_group"] == group}
                 kvs = sorted(tmp.items(), key = lambda kv: kv[1]["z_mu"], reverse=(group[0]!=(0)))
+                yx_groups[group] = [kv[0] for kv in kvs[:lim]]
                 print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
 
-    # print(yx_groups)
+    print(yx_groups)
     return
 
     pbar = tqdm(day_strs_list)
@@ -671,7 +672,7 @@ import warnings
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0.25, type=float) # hours
+@click.option("--y-threshold", default=0.5, type=float) # hours
 @click.option("--x-threshold", default=70.0, type=float)
 @click.option("--init-visibility-threshold", default=2.0, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
@@ -691,7 +692,7 @@ import warnings
 def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
-    plot_every, rng_seed, 
+    plot_every, rng_seed,
     gamma, dt, n_elbo_particles, finer,
     posterior_guide, 
     y_threshold, x_threshold,
