@@ -200,6 +200,7 @@ def train(
     day_strs_list,
     auto_split,
     auto_split_limit,
+    auto_split_random,
     use_gpu=False,
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
@@ -271,15 +272,20 @@ def train(
         yx_group = (int(y_label), int(x_label))
         yx_groups[yx_group].append(name)
 
+        s_guide_dist = s_guide_dist_dict[name]
+
         subsamples[name] = {
             "y": y,
             "x": x,
+            "yx_group": yx_group,
             "y_label": torch.tensor(y_label).to(device),
             "x_label": torch.tensor(x_label).to(device),
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
-            "s_guide_dist": s_guide_dist_dict[name],
+            "s_guide_dist": s_guide_dist,
             "model_logprobs": model_logprobs_output_dict[name],
+            "z_mu": s_guide_dist.loc.item(),
+            "z_sigma": s_guide_dist.scale.item(),
         }
 
         pbar.set_description(f"{name} -> yx_group = {yx_group}")
@@ -299,13 +305,16 @@ def train(
             lim = min(auto_split_limit, len(names))
             if lim < auto_split_limit:
                 print(f"warning: group {group} has only {lim} samples, less than limit of {auto_split_limit}")
-            random.seed(rng_seed)
-            yx_groups[group] = random.sample(yx_groups[group], lim)
+            if auto_split_random:
+                random.seed(rng_seed)
+                yx_groups[group] = random.sample(yx_groups[group], lim)
+            else:
+                tmp = {k: v for k, v in subsamples.items() if v["yx_group"] == group}
+                kvs = sorted(tmp.items(), key = lambda kv: kv[1]["z_mu"], reverse=(group[0]!=(0)))
+                print(group, sum([kv[1]['z_mu'] for kv in kvs[:lim]])/lim)
 
-    print(yx_groups)
-
+    # print(yx_groups)
     return
-
 
     pbar = tqdm(day_strs_list)
     for day_strs in pbar:
@@ -662,7 +671,7 @@ import warnings
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0.15, type=float) # hours
+@click.option("--y-threshold", default=0.25, type=float) # hours
 @click.option("--x-threshold", default=70.0, type=float)
 @click.option("--init-visibility-threshold", default=2.0, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
@@ -673,9 +682,11 @@ import warnings
 @click.option("--month", default=None, type=int)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
+@click.option("--all-days", is_flag=True)
 
 @click.option("--auto-split", is_flag=True)
 @click.option("--auto-split-limit", default=10, type=int)
+@click.option("--auto-split-random", is_flag=True) 
 
 def train_cmd(
     project, network_airport_codes, 
@@ -685,12 +696,16 @@ def train_cmd(
     posterior_guide, 
     y_threshold, x_threshold,
     init_visibility_threshold, init_ceiling_threshold,
-    day_strs, year, month, start_day, end_day,
-    auto_split, auto_split_limit,
+    day_strs, year, month, start_day, end_day, all_days,
+    auto_split, auto_split_limit, auto_split_random
 ):
     
     network_airport_codes = network_airport_codes.split(',')
-    if day_strs is not None:
+    if all_days:
+        start_day = f'2018-1-1'
+        end_day = f'2019-12-31'
+        day_strs = pd.date_range(start=start_day, end=end_day, freq='D').strftime('%Y-%m-%d').to_list()
+    elif day_strs is not None:
         day_strs = day_strs.split(',')
     elif year is not None:
         if month is not None:
@@ -738,6 +753,7 @@ def train_cmd(
         day_strs_list,
         auto_split,
         auto_split_limit,
+        auto_split_random,
     )
 
 
