@@ -50,11 +50,128 @@ from scripts.lga.lga_network import (
     get_hourly_delays,
 )
 
+def plot_failure_nominal_prior(failure_prior, nominal_prior):
+    fig = plt.figure()
+    s = nominal_prior.sample((10000,)).detach().cpu()
+    sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    s = failure_prior.sample((10000,)).detach().cpu()
+    sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
+    plt.savefig('ab_test.png')
+    plt.legend()
+    plt.close(fig)
+
 a = .1
 
 def transform_sample(sample):
     # return .02+.015*torch.tanh(a*sample)
     return .004 * sample + .02
+
+def _y_given_c_log_prob(model_logprobs, prior_log_prob_fn, device):
+    # index i corresonds to .0001*(100+i) ?
+    samples = torch.arange(0.0100, 0.0400, 0.0001).to(device)
+    prior_logprobs = prior_log_prob_fn(samples)
+    logprob = torch.logsumexp(model_logprobs + prior_logprobs, dim=-1)
+    return logprob # i think technically this is  abit off but whatever just approx for now.
+
+def _setup_guide(posterior_guide, mst_split, device):
+    # now define guide
+    n_context = 1
+    hidden_dim = 2
+    if posterior_guide == "nsf":
+       guide = zuko.flows.NSF(
+            features=mst_split,
+            context=n_context,
+            hidden_features=(hidden_dim, hidden_dim),
+            bins=2,
+        ).to(device) #this is the only one that really works??
+    elif posterior_guide == "cnf":
+        guide = zuko.flows.CNF(
+            features=mst_split,
+            context=n_context,
+            hidden_features=(hidden_dim, hidden_dim),
+        ).to(device)
+    elif posterior_guide == "gmm":
+        guide = ConditionalGaussianMixture(
+            n_context=n_context, 
+            n_features=mst_split,
+            # means=torch.tensor([.015, .015, .015]).reshape(3,1).to(device),
+            # log_vars=torch.log(torch.tensor([.0001, .0001, .0001])).reshape(3,1).to(device),
+        )
+    else:
+        raise ValueError
+    
+    return guide
+
+class PriorMixture(object):
+    def __init__(self, failure_prior, nominal_prior):
+        self.failure_prior = failure_prior
+        self.nominal_prior = nominal_prior
+        return
+    def log_prob(self, sample, label):
+        return (
+            (1-label) * self.nominal_prior.log_prob(sample)
+            + (label) * self.failure_prior.log_prob(sample)
+        )
+    
+class WeatherThreshold(torch.nn.Module):
+    def __init__(self, a, device, init_visibility_threshold, init_ceiling_threshold):
+        super().__init__()
+        self.device = device
+        self.visibility_threshold = torch.nn.Parameter(
+            torch.tensor(init_visibility_threshold).to(device),
+            requires_grad=True
+        )
+        self.ceiling_threshold = torch.nn.Parameter(
+            torch.tensor(init_ceiling_threshold).to(device), # scale by 1k
+            requires_grad=True
+        )
+        self.a = torch.tensor(a).to(device)
+
+    def assign_label(self, visibility, ceiling):
+        return 1 - torch.nn.functional.sigmoid(
+            self.a * (visibility - self.visibility_threshold)
+        ) * torch.nn.functional.sigmoid(
+            self.a * (ceiling/1000.0 - self.ceiling_threshold)
+        )
+    
+class ClusterThreshold(torch.nn.Module):
+    def __init__(
+            self, a, device, 
+            y_threshold,
+            x_threshold,
+            init_visibility_threshold, 
+            init_ceiling_threshold, 
+            v=None, c=None
+        ):
+        super().__init__()
+        self.device = device
+        self.visibility_threshold = torch.nn.Parameter(
+            torch.tensor(init_visibility_threshold).to(device),
+            requires_grad=True
+        ) if v is None else v
+        self.ceiling_threshold = torch.nn.Parameter(
+            torch.tensor(init_ceiling_threshold).to(device), # scale by 1k
+            requires_grad=True
+        ) if c is None else c
+        self.y_threshold = y_threshold
+        self.x_threshold = x_threshold
+        self.a = torch.tensor(a).to(device)
+
+    def assign_label(self, y, x, visibility, ceiling):
+        y_label = 1.0 if y > self.y_threshold else 0.0
+        x_label = 1.0 if x > self.x_threshold else 0.0
+        w_label = (
+            1 - torch.nn.functional.sigmoid(
+                self.a * (visibility - self.visibility_threshold)
+            ) * torch.nn.functional.sigmoid(
+                self.a * (ceiling/1000.0 - self.ceiling_threshold)
+            ),
+        )
+        return torch.cat(
+            (y_label, x_label, w_label),
+            axis=-1,
+        )
+
 
 
 def train(
@@ -66,16 +183,20 @@ def train(
     gamma,
     dt,
     n_elbo_particles,
+    finer,
     plot_every,
     rng_seed,
-    rem_args,
-    use_gpu=False
+    posterior_guide,
+    y_threshold,
+    x_threshold,
+    init_visibility_threshold,
+    init_ceiling_threshold,
+    day_strs_list,
+    use_gpu=False,
 ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
-
-    day_strs_list, posterior_guide = rem_args
 
     if use_gpu:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -84,6 +205,8 @@ def train(
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
         device = torch.device("cpu")
+
+    y_given_c_log_prob = functools.partial(_y_given_c_log_prob, device=device)
 
     # Avoid plotting error . test
     matplotlib.use("Agg")
@@ -95,6 +218,7 @@ def train(
     visibility_dict = dict(processed_visibility.values)
     processed_ceiling = pd.read_csv(extras_path / 'processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
+    # TODO: load x and y data
 
     with open(extras_path / f'2018-2019_finer_output_dict.pkl', 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
@@ -155,148 +279,34 @@ def train(
             # "observations_df": observations_df,
             "num_flights": num_flights,
             "model": model,
+            "y": None, # TODO: !!!
+            "x": num_flights,
             "visibility": visibility_dict[name],
             "ceiling": ceiling_dict[name],
             "s_guide_dist": s_guide_dist_dict[name],
             "model_logprobs": model_logprobs_output_dict[name],
         }
-
-    def y_given_c_log_prob(model_logprobs, prior_log_prob_fn):
-        # index i corresonds to .001*(10+i) ?
-        samples = torch.arange(0.010, 0.040, 0.001).to(device)
-        prior_logprobs = prior_log_prob_fn(samples)
-        logprob = torch.logsumexp(model_logprobs + prior_logprobs, dim=-1)
-        return logprob # i think technically this is  abit off but whatever just approx for now.
     
-    # now define guide
-    n_context = 1
-    hidden_dim = 2
-    if posterior_guide == "nsf":
-       guide = zuko.flows.NSF(
-            features=mst_split,
-            context=n_context,
-            hidden_features=(hidden_dim, hidden_dim),
-            bins=2,
-        ).to(device)
-    elif posterior_guide == "cnf":
-        guide = zuko.flows.CNF(
-            features=mst_split,
-            context=n_context,
-            hidden_features=(hidden_dim, hidden_dim),
-        ).to(device)
-    elif posterior_guide == "gmm":
-        guide = ConditionalGaussianMixture(
-            n_context=n_context, 
-            n_features=mst_split,
-            # means=torch.tensor([.015, .015, .015]).reshape(3,1).to(device),
-            # log_vars=torch.log(torch.tensor([.0001, .0001, .0001])).reshape(3,1).to(device),
-        )
-    else:
-        raise ValueError
 
-    # here, we make the nominal, failure, and uniform (not used) priors...
-    # TODO: shifted gamma doesn't work. i have no idea why
-
-    mst_prior_nominal = dist.Normal(
+    nominal_prior = dist.Normal(
         torch.tensor(.0125).to(device), 
         # torch.tensor(.0004).to(device)
         torch.tensor(.001).to(device)
     )
 
-    mst_prior_failure = dist.Normal(
+    failure_prior = dist.Normal(
         torch.tensor(.0190).to(device), 
         # torch.tensor(.0012).to(device)
         torch.tensor(.003).to(device)
     )
 
-    return
+    plot_failure_nominal_prior(failure_prior, nominal_prior)
 
-    fig = plt.figure()
-    s = mst_prior_nominal.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='b', alpha=.33, fill=True, label="nominal", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-    s = mst_prior_failure.sample((10000,)).detach().cpu()
-    sns.histplot(s, color='r', alpha=.33, fill=True, label="failure", kde=True, binwidth=.0001, edgecolor='k', linewidth=0)
-    plt.savefig('ab_test.png')
-    plt.legend()
-    plt.close(fig)
-    
-    # now define prior
-    # TODO!!:
-    prior_dists = (
-        mst_prior_nominal,
-        mst_prior_failure,
-    )
-    failure_prior = mst_prior_failure
-    nominal_prior = mst_prior_nominal
+    # setup guide
+    guide = _setup_guide(posterior_guide, mst_split, device)
 
-    class PriorMixture(object):
-        def __init__(self, failure_prior, nominal_prior):
-            self.failure_prior = failure_prior
-            self.nominal_prior = nominal_prior
-            return
-        def log_prob(self, sample, label):
-            return (
-                (label) * self.failure_prior.log_prob(sample) + 
-                (1-label) * self.nominal_prior.log_prob(sample)
-            )
-        
-    class WeatherThreshold(torch.nn.Module):
-
-        def __init__(self, a):
-            super().__init__()
-            self.device = device
-            self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(2.0).to(device),
-                requires_grad=True
-            )
-            self.ceiling_threshold = torch.nn.Parameter(
-                torch.tensor(1.0).to(device), # scale by 1k
-                requires_grad=True
-            )
-            self.a = torch.tensor(a).to(device)
-
-        def assign_label(self, visibility, ceiling):
-            return 1 - torch.nn.functional.sigmoid(
-                self.a * (visibility - self.visibility_threshold)
-            ) * torch.nn.functional.sigmoid(
-                self.a * (ceiling/1000.0 - self.ceiling_threshold)
-            )
-        
-    class ClusterThreshold(torch.nn.Module):
-
-        def __init__(self, a, v=None, c=None):
-            super().__init__()
-            self.device = device
-            self.visibility_threshold = torch.nn.Parameter(
-                torch.tensor(2.0).to(device),
-                requires_grad=True
-            ) if v is None else v
-            self.ceiling_threshold = torch.nn.Parameter(
-                torch.tensor(1.0).to(device), # scale by 1k
-                requires_grad=True
-            ) if c is None else c
-            self.num_flights_threshold = torch.nn.Parameter(
-                torch.tensor(1.0).to(device), # scale by 1k
-                requires_grad=True
-            )
-            # self.ceiling_threshold = torch.nn.Parameter()
-            self.a = torch.tensor(a).to(device)
-
-        def assign_label(self, visibility, ceiling, num_flights):
-            return (
-                (
-                    1 - torch.nn.functional.sigmoid(
-                        self.a * (visibility - self.visibility_threshold)
-                    ) * torch.nn.functional.sigmoid(
-                        self.a * (ceiling/1000.0 - self.ceiling_threshold)
-                    )
-                ) * torch.nn.functional.sigmoid(
-                    self.a * (num_flights/1000 - self.num_flights_threshold)
-                )
-            ).unsqueeze(dim=-1)
-        
-    wt = WeatherThreshold(50.0)
-    ct = ClusterThreshold(50.0)#, wt.visibility_threshold, wt.ceiling_threshold)
+    wt = WeatherThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
+    ct = ClusterThreshold(50.0, device, init_visibility_threshold, init_ceiling_threshold)
 
     prior_mixture = PriorMixture(failure_prior, nominal_prior)
 
@@ -588,13 +598,16 @@ import warnings
 @click.option("--gamma", default=.1) # was .1
 @click.option("--dt", default=.1)
 @click.option("--n-elbo-particles", default=1)
+@click.option("--finer", is_flag=True)
 
 @click.option("--posterior-guide", default="nsf", help="nsf/cnf/gmm") 
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0.15, type=int) # hours
-@click.option("--x-threshold", default=800, type=int)
+@click.option("--y-threshold", default=0.15, type=float) # hours
+@click.option("--x-threshold", default=800.0, type=float)
+@click.option("--init-visibility-threshold", default=2.0, type=float) # hours
+@click.option("--init-ceiling-threshold", default=1.0, type=float)
 
 @click.option("--day-strs", default=None)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
@@ -607,24 +620,13 @@ def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
     plot_every, rng_seed, 
-    gamma, dt, n_elbo_particles,
+    gamma, dt, n_elbo_particles, finer,
     posterior_guide, 
     y_threshold, x_threshold,
+    init_visibility_threshold, init_ceiling_threshold,
     day_strs, year, month, start_day, end_day,
 ):
-    # TODO: make this better
-
-    # nominal_days = [
-    #     1,2,3,4,5,7,9,
-    #     10,12,13,14,15,16,
-    #     20,24,25,26,27,28,29
-    # ]
-
-    # failure_days = [
-    #     d for d in range(1,32)
-    #     if d not in nominal_days
-    # ] 
-
+    
     network_airport_codes = network_airport_codes.split(',')
     if day_strs is not None:
         day_strs = day_strs.split(',')
@@ -659,12 +661,15 @@ def train_cmd(
         gamma,
         dt,
         n_elbo_particles,
+        finer,
         plot_every,
         rng_seed,
-        (
-            day_strs_list,
-            posterior_guide
-        )
+        posterior_guide,
+        y_threshold,
+        x_threshold,
+        init_visibility_threshold,
+        init_ceiling_threshold,
+        day_strs_list,
     )
 
 
