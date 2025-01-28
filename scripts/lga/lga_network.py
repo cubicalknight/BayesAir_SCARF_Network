@@ -761,8 +761,8 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
     )
 
     if relu:
-        arrival_delays_df["sample_arrival_delay"].clip(lower=0, inplace=True)
-        arrival_delays_df["actual_arrival_delay"].clip(lower=0, inplace=True)
+        arrival_delays_df["sample_arrival_delay"] = arrival_delays_df["sample_arrival_delay"].clip(lower=0)
+        arrival_delays_df["actual_arrival_delay"] = arrival_delays_df["actual_arrival_delay"].clip(lower=0)
 
     actual_arrival_hour = (
         np.floor(arrival_delays_df.actual_arrival_time).astype(int)
@@ -804,8 +804,8 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
     )
 
     if relu:
-        arrival_delays_df["sample_departure_delay"].clip(lower=0, inplace=True)
-        arrival_delays_df["actual_departure_delay"].clip(lower=0, inplace=True)
+        departure_delays_df["sample_departure_delay"] = departure_delays_df["sample_departure_delay"].clip(lower=0)
+        departure_delays_df["actual_departure_delay"] = departure_delays_df["actual_departure_delay"].clip(lower=0)
 
     actual_departure_hour = (
         np.floor(departure_delays_df.actual_departure_time).astype(int)
