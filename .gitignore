@@ -164,8 +164,9 @@ cython_debug/
 
 wandb/
 checkpoints/
-checkpoints_final/
-checkpoints_*/
+# checkpoints_*/
+
+!scripts/lga/bayes-air-atrds-attempt-8
 
 data/bts_*/*_yearly/*
 !data/bts_remapped/*_yearly/parquet
