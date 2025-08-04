@@ -1,4 +1,6 @@
-"""Run the simulation for a LGA focused augmented network"""
+# %%
+import sys
+"""Run the simulation for a LGA and JFK focused augmented network"""
 import os
 from itertools import combinations
 
@@ -39,7 +41,7 @@ from pbar_pool import PbarPool, Pbar
 
 def plot_travel_times(
     auto_guide, states, n_samples, empirical_travel_times, wandb=True
-):
+    ):
     """Plot posterior samples of travel times."""
     # Sample nominal travel time estimates from the posterior
     with pyro.plate("samples", n_samples, dim=-1):
@@ -314,7 +316,7 @@ def plot_rmses(arr_rmses, dep_rmses, arr_rmses_adj, dep_rmses_adj, rmse_idxs):
 def get_arrival_departures_rmses(
     model, auto_guide, states, 
     observations_df, n_samples, wandb=True
-):
+    ):
     
     with pyro.plate("samples", n_samples, dim=-1):
         posterior_samples = auto_guide(states)
@@ -1006,7 +1008,7 @@ def train(
 
     rem_args,
     use_gpu=False
-):
+    ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
@@ -1327,8 +1329,8 @@ import warnings
 # for scale levels, let's try .1 and .25 first maybe?
 
 @click.option("--day-strs", default=None)
-@click.option("--year", default=None)
-@click.option("--month", default=None)
+@click.option("--year", default=2019, type=int)
+@click.option("--month", default=7, type=int)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 

@@ -1,26 +1,26 @@
 """Run the simulation for a LGA focused augmented network"""
 import os
-from itertools import combinations
+# from itertools import combinations
 
 import click
 import matplotlib
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
+# import numpy as np
 import pyro
-import seaborn as sns
+# import seaborn as sns
 import torch
-from math import ceil, floor
+# from math import ceil, floor
 import functools
 import dill
-import sys
+# import sys
 from pathlib import Path
 
 import bayes_air.utils.dataloader as ba_dataloader
 import wandb
 from bayes_air.model import augmented_air_traffic_network_model_simplified
-from bayes_air.network import NetworkState, AugmentedNetworkState
-from bayes_air.schedule import split_and_parse_full_schedule
+# from bayes_air.network import NetworkState, AugmentedNetworkState
+# from bayes_air.schedule import split_and_parse_full_schedule
 
 from tqdm import tqdm
 
@@ -36,9 +36,9 @@ from scripts.utils import (
     _shifted_gamma_dist_from_shape_rate,
     ConditionalGaussianMixture
 )
-import zuko
+# import zuko
 
-from pbar_pool import PbarPool, Pbar
+# from pbar_pool import PbarPool, Pbar
 
 from scripts.lga.lga_network import (
     make_travel_times_dict_and_observation_df,
@@ -67,6 +67,7 @@ def single_particle_model_log_prob(model, states):
 
     return model_logprob
 
+
 def model_log_prob(model, states, device, num_particles=1):
     """
     this is like p(y|z;c) i think
@@ -80,8 +81,10 @@ def model_log_prob(model, states, device, num_particles=1):
 
     return model_log_prob
 
+
 def map_to_sample_sites_exp(sample):
     return {'LGA_0_mean_service_time': torch.exp(sample)}
+
 
 def map_to_sample_sites_identity(sample):
     return {'LGA_0_mean_service_time': sample}
@@ -107,8 +110,6 @@ def objective_fn(model, guide_dist, states, device, n_elbo_particles=1):
         elbo += single_particle_elbo(model, guide_dist, states) / n_elbo_particles
     # we already scale in the model?
     return -elbo
-
-
 
 
 def single_particle_objective(model, guide_dist, prior_dist):
@@ -312,14 +313,14 @@ def train(
 
     dir_path = os.path.dirname(__file__)
     # save_path = os.path.join(dir_path, "model_logprobs")
-    save_path = os.path.join(dir_path, "model_logprobs_finer")
+    save_path = os.path.join(dir_path, "model_logprobs_finer_testing")
     os.makedirs(save_path, exist_ok=True)
     fname = (
         f"{year:04d}_{month:02d}_output_dict.pkl" 
         if year is not None and month is not None else
         f"output_dict.pkl" 
     )
-    with open(os.path.join(save_path, fname), 'wb+') as handle:
+    with open(os.path.join(save_path, po), 'wb+') as handle:
         dill.dump(output_dict, handle)
 
     list_dict = {
