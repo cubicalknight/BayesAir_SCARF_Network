@@ -1,12 +1,21 @@
+# %%
 """Utilities for loading data."""
 import os
 from pathlib import Path
 import functools
 
 import pandas as pd
+import polars as pl
 import timezonefinder as tzf
 from tqdm import tqdm
 
+import warnings
+
+from bayes_air.types.util import CoreAirports
+
+# import airporttime
+import airportsdata as ad
+airports = ad.load('IATA')
 
 def load_all_data():
     """Get all available WN flight data"""
@@ -47,13 +56,14 @@ def load_remapped_data_bts(
         dates: pd.DatetimeIndex) -> list[pd.DataFrame]:
     script_dir = Path(__file__).parent 
     data_dir = script_dir.parent.parent / 'data'
-    remapped_dir = data_dir / 'bts_remapped/lga_reduced_2010-2019_clean_daily/parquet'
+    # remapped_dir = data_dir / 'bts_remapped/lga_reduced_2010-2019_clean_daily/parquet'
+    remapped_dir = ...
 
     data = {}
 
     for date in dates:
         year, month, day = f'{date.year:04d}', f'{date.month:02d}', f'{date.day:02d}'
-        df_path = remapped_dir / f'{year}/{month}/lga_reduced_{year}_{month}_{day}_clean.parquet'
+        # df_path = remapped_dir / f'{year}/{month}/lga_reduced_{year}_{month}_{day}_clean.parquet'
         df = pd.read_parquet(df_path)
         data[date.strftime('%Y-%m-%d')] = df
     
@@ -64,35 +74,55 @@ def load_remapped_data_bts(
 def remap_all_data_bts(
         start_year=2010,
         end_year=2019,
-        time_res='daily'
+        time_res='daily',
+        airport='LGA',
+        year=2019
     ):
     # Get the directory of the current file
     script_dir = Path(__file__).parent 
     data_dir = script_dir.parent.parent / 'data'
+
     # unfortunately this is kinda hard-coded for now.. the name structure
-    base_dir = data_dir / f'bts_raw/lga_reduced_{start_year}-{end_year}_clean_{time_res}'
-    out_dir = data_dir / f'bts_remapped/lga_reduced_{start_year}-{end_year}_clean_{time_res}'
+    base_dir = data_dir / f'bts_raw/airport_split_by_day/parquet/{airport}/{year}' #f'bts_raw/lga_reduced_{start_year}-{end_year}_clean_{time_res}'
+    out_dir = data_dir / f'bts_remapped/{airport}/{year}/clean_{time_res}'
     airport_locations_path = data_dir / 'airport_locations.csv'
 
-    airport_locations_df = pd.read_csv(airport_locations_path)
-    airport_locations_df = airport_locations_df[
-        airport_locations_df.AIRPORT_IS_LATEST.astype(bool)]
+    # airport_locations_df = pd.read_csv(airport_locations_path)
+    airport_locations_df = pl.read_csv(airport_locations_path)
+    airport_locations_df = airport_locations_df.with_columns(
+        pl.col('AIRPORT_IS_LATEST').cast(pl.Boolean)
+    )
+    # airport_locations_df = airport_locations_df[
+    #     airport_locations_df.AIRPORT_IS_LATEST.astype(bool)]
     
-    remap_and_save_bts_all(base_dir, out_dir, airport_locations_df)
+    remap_and_save_bts_all(base_dir, out_dir, airport_locations_df, airport_code=airport)
 
 # TODO: somethign to take the raws and spit out remapped
-def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
+def remap_and_save_bts_all(base_dir_parquet, out_dir, airport_locations_df, airport_code=None):
+    global airports
 
-    base_dir = Path(base_dir).resolve() 
+    # check if base dir exists
+    if not Path(base_dir_parquet).exists():
+        raise FileNotFoundError(f"Base directory {base_dir_parquet} does not exist.")
+
+    # base_dir = Path(base_dir).resolve() 
     out_dir = Path(out_dir).resolve()
-    base_dir_parquet = base_dir / 'parquet'
+    # base_dir_parquet = base_dir / 'parquet'
     out_dir_parquet = out_dir / 'parquet'
     out_dir_csv = out_dir / 'csv'
 
     paths = list(base_dir_parquet.rglob("*.parquet"))
+    # print(paths)
+    # sys.exit(0)
+    # set time zone based on airport code
+    if airport_code is None:
+        raise ValueError("airport_code must not be None")
+    time_zone = airports[airport_code]['tz']
 
-    for path in tqdm(paths):
-
+    # print(f"Remapping and saving data {paths[0]}, {paths[-1]}")
+    pbar_path = tqdm(paths, desc=f"Remapping data for {airport_code} - {year}")
+    for path in pbar_path:
+        pbar_path.set_description(f"Remapping data for {airport_code} - {path.stem}")
         # debugging...
         # if path.stem != 'lga_reduced_2004_08_clean':
         #     continue
@@ -105,12 +135,14 @@ def remap_and_save_bts_all(base_dir, out_dir, airport_locations_df):
         out_path_parquet.parent.mkdir(parents=True, exist_ok=True)
         out_path_csv.parent.mkdir(parents=True, exist_ok=True)
 
+        # print(f"Processing {path} -> {out_path_parquet} and {out_path_csv}")
+        # continue
         remapped_df = remap_columns(
-                        pd.read_parquet(path), 
+                        pl.read_parquet(path), 
                         airport_locations_df,
                         # TODO: tz currently hard-coded for LGA
                         # also note that it's differnet from EST...
-                        out_time_zone="America/New_York", 
+                        out_time_zone=time_zone, 
                         use_bts_columns=True
                     )
         
@@ -176,6 +208,7 @@ def convert_to_float_hours_optimized(time_series, time_zone_series, out_time_zon
     Returns:
         Float hours since midnight, or None for canceled flights
     """
+    raise NotImplementedError("Not updated for polars yet, use convert_to_float_hours_optimized_bts instead")
     # Replace "--:--" with "00:00" (mark them for later modification)
     time_series.replace("--:--", "00:00", inplace=True)
 
@@ -214,16 +247,36 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
     """
 
     # Replace 2400 with 2359 (midnight)
-    time_series.replace(2400, 2359, inplace=True)
+    # time_series.replace("2400", "2359", inplace=True)
 
     # cancelled to zero so as to not error
-    time_series.replace(9999, 0000, inplace=True)
+    # time_series.replace("9999", "0000", inplace=True)
+    # print("Cleaning time series...")
+    time_series_clean = time_series.astype(str).str.zfill(4)
+    time_series_clean = time_series_clean.replace({
+        "2400": "2359",  # midnight represented safely
+        "9999": "0000",  # canceled flights -> midnight
+        "0": pd.NA,
+        "00": pd.NA,
+        "000": pd.NA,
+        "0000": "0000",  # keep valid zero-padded
+        "NaN": pd.NA,
+        "None": pd.NA,
+        "": pd.NA
+    })
+
+    # print("Converting time series to datetime objects...")
 
     # Convert time strings to datetime objects
     try: 
-        time_objects = pd.to_datetime(time_series.astype(str).str.zfill(4), format="%H%M")
-    except:
-        for i in range(len(time_series)):
+        time_objects = pd.to_datetime(time_series_clean, format="%H%M")
+    except Exception as e:
+        print(e)
+        raise ValueError(
+            "Error converting time series to datetime objects. "
+        )
+        print("Error converting time series to datetime objects, checking for issues...")
+        for i in tqdm(range(len(time_series))):
             try:
                 x = pd.to_datetime(time_series.astype(str).str.zfill(4).iloc[i], format="%H%M")
             except:
@@ -252,6 +305,14 @@ def convert_to_float_hours_optimized_bts(time_series, time_zone_series, out_time
 
 
 def time_zone_for_airports(airport_codes, airport_locations_df):
+    # raise DeprecationWarning(
+    #     "time_zone_for_airports is deprecated, use airportsdata instead."
+    # )
+    # print(airport_locations_df)
+    # sys.exit(0)
+    # warnings.warn(
+    #     "time_zone_for_airports is deprecated, use airportsdata instead."
+    # )
     """Get the time zone for each airport.
 
     Args:
@@ -264,20 +325,63 @@ def time_zone_for_airports(airport_codes, airport_locations_df):
     # Get the time zone for each airport
     finder = tzf.TimezoneFinder()
     time_zones = []
-    for airport_code in airport_codes:
-        latitude = airport_locations_df[
-            airport_locations_df.AIRPORT == airport_code
-        ].LATITUDE.iat[0]
-        longitude = airport_locations_df[
-            airport_locations_df.AIRPORT == airport_code
-        ].LONGITUDE.iat[0]
-        time_zones.append(finder.timezone_at(lng=longitude, lat=latitude))
+    # print(airport_locations_df)
+    # NOTE commented out is for Pandas
+    # for airport_code in airport_codes:
+    #     latitude = airport_locations_df[
+    #         airport_locations_df['AIRPORT'] == airport_code
+    #     ].LATITUDE.iat[0]
+    #     longitude = airport_locations_df[
+    #         airport_locations_df['AIRPORT'] == airport_code
+    #     ].LONGITUDE.iat[0]
+    #     time_zones.append(finder.timezone_at(lng=longitude, lat=latitude))
+
+    # for airport_code in tqdm(airport_codes):
+    #     # Filter the DataFrame for the current airport
+    #     airport_info = airport_locations_df.filter(
+    #         (pl.col("AIRPORT") == airport_code) & (pl.col("AIRPORT_IS_LATEST") == True)
+    #     )
+    #     # print(airport_info)
+    #     # Extract latitude and longitude from the filtered result
+    #     latitude = airport_info["LATITUDE"][0]
+    #     longitude = airport_info["LONGITUDE"][0]
+
+    #     # Get timezone
+    #     time_zones.append(finder.timezone_at(lng=longitude, lat=latitude))
+
+    # Step 1: Filter the airport data once
+    latest_airports_df = airport_locations_df.filter(pl.col("AIRPORT_IS_LATEST") == True)
+    latest_airports_df = (
+        latest_airports_df
+        .group_by("AIRPORT", maintain_order=True)
+        .first()
+    )
+
+
+    # Step 2: Create a Polars DataFrame from your list of codes
+    airport_codes_df = pl.DataFrame({"AIRPORT": airport_codes})
+
+    # Step 3: Join on AIRPORT to get only matching rows with lat/lon
+    merged_df = airport_codes_df.join(latest_airports_df, on="AIRPORT", how="inner")
+
+    # Step 4: Compute time zones using `apply`
+    merged_with_tz = merged_df.with_columns([
+        pl.struct(["LONGITUDE", "LATITUDE"]).map_elements(
+            lambda row: finder.timezone_at(lng=row["LONGITUDE"], lat=row["LATITUDE"]),
+            return_dtype=pl.Utf8
+        ).alias("TIME_ZONE")
+    ])
+
+    # Now extract the time zone list if needed
+    time_zones = merged_with_tz["TIME_ZONE"].to_list()
 
     return time_zones
 
 
 def remap_columns(
-        df, airport_locations_df, out_time_zone="UTC", 
+        df, 
+        airport_locations_df, 
+        out_time_zone="UTC", 
         use_bts_columns=False,
     ):
     """Remap columns in the DataFrame to the names that we expect.
@@ -342,50 +446,116 @@ def remap_columns(
     # if using the bts data, we add the carrier code to the flight number
     # because of uniqueness issues by day ;-;
     if use_bts_columns:
-        df['Flight_Number_Reporting_Airline'] = (
-            df['Reporting_Airline'].astype(str) 
-            + ':' +
-            df['Flight_Number_Reporting_Airline']
+        # df['Flight_Number_Reporting_Airline'] = (
+        #     df['Reporting_Airline'].astype(str) 
+        #     + ':' +
+        #     df['Flight_Number_Reporting_Airline']
+        # )
+        df = df.with_columns(
+            (pl.col("Reporting_Airline").cast(pl.String) + ":" + pl.col("Flight_Number_Reporting_Airline").cast(pl.String)).alias("flight_number")
         )
 
     # Filter the original DataFrame based on the desired columns
-    remapped_df = df[column_mapping.keys()]
+     #df[column_mapping.keys()]
+    remapped_df = df.with_columns(
+        [
+            pl.col(col).alias(new_col) 
+            for col, new_col in column_mapping.items()
+        ]
+    )
 
     # Rename the columns based on the mapping
-    remapped_df = remapped_df.rename(columns=column_mapping)
+    safe_mapping = {
+        old: new
+        for old, new in column_mapping.items()
+        if (new not in remapped_df.columns) or (old == new)
+    }
+
+    remapped_df = remapped_df.rename(safe_mapping)
+
+    # remapped_df.rename(columns=column_mapping)
+    # remapped_df = remapped_df.rename(column_mapping)
 
     # Get a list of airport time zones
-    airport_codes = pd.concat(
-        [
-            remapped_df["origin_airport"],
-            remapped_df["destination_airport"],
-        ]
-    ).unique()
-    airport_time_zones = pd.DataFrame(
-        {
-            "airport_code": airport_codes,
-            "time_zone": time_zone_for_airports(airport_codes, airport_locations_df),
-        }
+    # airport_codes = pd.concat(
+    #     [
+    #         remapped_df["origin_airport"],
+    #         remapped_df["destination_airport"],
+    #     ]
+    # ).unique()
+    airport_codes = (
+        pl.concat([
+            remapped_df["origin_airport"].cast(pl.String),
+            remapped_df["destination_airport"].cast(pl.String),
+        ])
+        .unique()
     )
 
+    # print(airport_codes)
+
+    codes = airport_codes.to_list()  # List of strings
+    try:
+        tzs = [airports[code]["tz"] for code in codes]  # Lookup each tz
+        airport_time_zones = pl.DataFrame(
+            {
+                "airport_code": airport_codes,
+                # "time_zone": time_zone_for_airports(airport_codes, airport_locations_df),
+                "time_zone": tzs,
+            }
+        )
+    except KeyError as e:
+        print(f"KeyError: {e}. Falling back to timezonefinder.")
+        airport_time_zones = pl.DataFrame(
+            {
+                "airport_code": airport_codes,
+                "time_zone": time_zone_for_airports(airport_codes, airport_locations_df),
+                # "time_zone": tzs,
+            }
+        )
+
     # Add a column for time zones to remapped_df using a merge
-    remapped_df = remapped_df.merge(
-        airport_time_zones,
+    # remapped_df = remapped_df.merge(
+    #     airport_time_zones,
+    #     left_on="origin_airport",
+    #     right_on="airport_code",
+    # )
+    # remapped_df = remapped_df.rename(columns={"time_zone": "origin_time_zone"})
+    # remapped_df = remapped_df.merge(
+    #     airport_time_zones,
+    #     left_on="destination_airport",
+    #     right_on="airport_code",
+    # )
+    # remapped_df = remapped_df.rename(columns={"time_zone": "destination_time_zone"})
+    tz_lookup = airport_time_zones.select(["airport_code", "time_zone"])
+
+    # Origin join
+    remapped_df = remapped_df.join(
+        tz_lookup,
         left_on="origin_airport",
         right_on="airport_code",
-    )
-    remapped_df = remapped_df.rename(columns={"time_zone": "origin_time_zone"})
-    remapped_df = remapped_df.merge(
-        airport_time_zones,
+        how="left"
+    ).rename({"time_zone": "origin_time_zone"})
+
+    # Destination join
+    remapped_df = remapped_df.join(
+        tz_lookup,
         left_on="destination_airport",
         right_on="airport_code",
-    )
-    remapped_df = remapped_df.rename(columns={"time_zone": "destination_time_zone"})
+        how="left"
+    ).rename({"time_zone": "destination_time_zone"})
 
 
     # Convert "yes/no" to True/False in the cancelled column
     if not use_bts_columns:
-        remapped_df["cancelled"] = remapped_df["cancelled"] == "Yes"
+        # remapped_df["cancelled"] = remapped_df["cancelled"] == "Yes"
+        remapped_df = remapped_df.with_columns(
+            (pl.col("cancelled") == "Yes").alias("cancelled")
+        )
+
+    # convert everything back to pandas
+    # warnings.warn("remapping back to pandas, use polars where possible")
+    remapped_df = remapped_df.to_pandas()
+
 
     # Convert all times to hours since midnight
     if use_bts_columns:
@@ -524,8 +694,8 @@ def remap_columns(
 
     # for failed diverted flights, set some meaningless columns to zero
     failed_diverted = (
-        remapped_df.diverted & 
-        (~remapped_df.diverted_reached_destination)
+        remapped_df.diverted.astype(bool) & 
+        (~remapped_df.diverted_reached_destination.astype(bool))
     )
     remapped_df.loc[
         failed_diverted, 
@@ -567,12 +737,13 @@ def top_N_df(df, number_of_airports: int):
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    remap_all_data_bts(time_res="decade")
-
-
-
+    CoreAirports = list(CoreAirports.keys())[-12:]
+    # for year in (2018, 2019):
+    year = 2019
+    pbar = tqdm(CoreAirports, desc=f"Remapping data for {year}")
+    for code in pbar:
+        pbar.set_description(f"Remapping data for {year} - {code}")
+        remap_all_data_bts(time_res="daily", airport=code, year=year)
 
     # # Load data, filter, and split by date
     # df, airport_locations_df = load_all_data()

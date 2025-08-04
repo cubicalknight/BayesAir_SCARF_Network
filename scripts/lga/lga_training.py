@@ -44,13 +44,13 @@ import zuko
 
 from pbar_pool import PbarPool, Pbar
 
-from scripts.lga.lga_network import (
-    make_travel_times_dict_and_observation_df,
-    make_states,
-    plot_time_indexed_network_var,
-    plot_hourly_delays,
-    get_hourly_delays,
-)
+# from scripts.lga.lga_network import (
+#     make_travel_times_dict_and_observation_df,
+#     make_states,
+#     plot_time_indexed_network_var,
+#     plot_hourly_delays,
+#     get_hourly_delays,
+# )
 
 def plot_failure_nominal_prior(failure_prior, nominal_prior):
     fig = plt.figure()
@@ -229,6 +229,7 @@ def train(
     dir_path = Path(__file__).parent
     extras_path = dir_path / 'extras'
 
+    # TODO generate these using the jupyter file
     processed_visibility = pd.read_csv(extras_path / 'processed_visibility.csv')
     visibility_dict = dict(processed_visibility.values)
     processed_ceiling = pd.read_csv(extras_path / 'processed_ceiling.csv')
@@ -239,6 +240,7 @@ def train(
     processed_y = pd.read_csv(extras_path / 'y_event_delays.csv') # TODO: option
     y_dict = dict(processed_y.values)
 
+    # TODO regenerate wrt each apt
     model_logprobs_name = (
         '2018-2019_finer_output_dict.pkl' 
         if finer else '2018-2019_output_dict.pkl'
@@ -665,7 +667,6 @@ import warnings
 @click.option("--auto-split", is_flag=True)
 @click.option("--auto-split-limit", default=20, type=int) # was 10
 @click.option("--auto-split-random", is_flag=True) 
-
 def train_cmd(
     project, network_airport_codes, 
     svi_steps, n_samples, svi_lr, 
@@ -677,7 +678,18 @@ def train_cmd(
     day_strs, year, month, start_day, end_day, all_days,
     auto_split, auto_split_limit, auto_split_random
 ):
-    
+    print(f"Running training with project: {project}, network_airport_codes: {network_airport_codes}, "
+          f"svi_steps: {svi_steps}, n_samples: {n_samples}, svi_lr: {svi_lr}, "
+            f"plot_every: {plot_every}, rng_seed: {rng_seed}, gamma: {gamma}, dt: {dt}, "
+            f"n_elbo_particles: {n_elbo_particles}, finer: {finer}, "
+            f"posterior_guide: {posterior_guide}, "
+            f"y_threshold: {y_threshold}, x_threshold: {x_threshold}, "
+            f"init_visibility_threshold: {init_visibility_threshold}, "
+            f"init_ceiling_threshold: {init_ceiling_threshold}, "
+            f"day_strs: {day_strs}, year: {year}, month: {month}, "
+            f"start_day: {start_day}, end_day: {end_day}, all_days: {all_days}, "
+            f"auto_split: {auto_split}, auto_split_limit: {auto_split_limit}, "
+            f"auto_split_random: {auto_split_random}")
     network_airport_codes = network_airport_codes.split(',')
     if day_strs is not None:
         day_strs = day_strs.split(',')

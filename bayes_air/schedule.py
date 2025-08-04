@@ -6,7 +6,7 @@ from pathlib import Path
 from bayes_air.types import Airport, Flight, Time, Schedule, AirportCode, SourceSupernode
 
 # Parse the provided data into our custom data structures
-def parse_flight(schedule_row: tuple, device=None) -> Flight:
+def parse_flight(schedule_row, device=None) -> Flight:
     """
     Parse a row of the schedule into an Flight object.
 
