@@ -27,7 +27,7 @@ def parse_flight(schedule_row, device=None) -> Flight:
     if device is None:
         device = torch.device("cpu")
 
-    flight_number = schedule_row["flight_number"]
+    flight_number = schedule_row['Reporting_Airline'] + schedule_row["flight_number"]
     origin_airport = schedule_row["origin_airport"]
     destination_airport = schedule_row["destination_airport"]
     scheduled_departure_time = schedule_row["scheduled_departure_time"]
@@ -249,13 +249,13 @@ def parse_split_schedule(
     
 
 def split_and_parse_full_schedule(
-    schedule_df: Schedule,
-    network_airport_codes: list[AirportCode],
-    device=None
-) -> tuple[
-    list[Flight], list[Flight], 
-    list[Flight], list[Flight]
-]:
+        schedule_df: Schedule,
+        network_airport_codes: list[AirportCode],
+        device=None
+        ) -> tuple[
+            list[Flight], list[Flight], 
+            list[Flight], list[Flight]
+     ]:
     network_schedule_df, incoming_schedule_df = \
         split_full_schedule(schedule_df, network_airport_codes)
     

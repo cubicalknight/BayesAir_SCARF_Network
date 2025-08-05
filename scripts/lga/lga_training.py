@@ -18,11 +18,11 @@ from pathlib import Path
 import random
 import itertools
 
-import bayes_air.utils.dataloader as ba_dataloader
+# import bayes_air.utils.dataloader as ba_dataloader
 import wandb
-from bayes_air.model import augmented_air_traffic_network_model_simplified
-from bayes_air.network import NetworkState, AugmentedNetworkState
-from bayes_air.schedule import split_and_parse_full_schedule
+# from bayes_air.model import augmented_air_traffic_network_model_simplified
+# from bayes_air.network import NetworkState, AugmentedNetworkState
+# from bayes_air.schedule import split_and_parse_full_schedule
 
 from tqdm import tqdm
 
@@ -187,28 +187,28 @@ class ClusterThreshold(torch.nn.Module):
 
 
 def train(
-    project,
-    network_airport_codes, 
-    svi_steps, 
-    n_samples, 
-    svi_lr, 
-    gamma,
-    dt,
-    n_elbo_particles,
-    finer,
-    plot_every,
-    rng_seed,
-    posterior_guide,
-    y_threshold,
-    x_threshold,
-    init_visibility_threshold,
-    init_ceiling_threshold,
-    day_strs_list,
-    auto_split,
-    auto_split_limit,
-    auto_split_random,
-    use_gpu=False,
-):
+        project,
+        network_airport_codes, # not used?
+        svi_steps, 
+        n_samples, 
+        svi_lr, 
+        gamma,
+        dt,
+        n_elbo_particles,
+        finer,
+        plot_every,
+        rng_seed,
+        posterior_guide,
+        y_threshold,
+        x_threshold,
+        init_visibility_threshold,
+        init_ceiling_threshold,
+        day_strs_list,
+        auto_split,
+        auto_split_limit,
+        auto_split_random,
+        use_gpu=False,
+    ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
@@ -293,16 +293,18 @@ def train(
         }
 
         pbar.set_description(f"{name} -> yx_group = {yx_group}")
-
-    # for k, v in subsamples.items():
-    #     print(
-    #         k, 
-    #         int(v['y_label'].item()), 
-    #         int(v['x_label'].item()), 
-    #         f'{v["y"]:.3f}',
-    #         v['x'],
-    #     )
-    # print(yx_groups)
+    
+    '''
+    for k, v in subsamples.items():
+        print(
+            k, 
+            int(v['y_label'].item()), 
+            int(v['x_label'].item()), 
+            f'{v["y"]:.3f}',
+            v['x'],
+        )
+    print(yx_groups)
+    '''
 
     if auto_split:
         for group, names in yx_groups.items():
@@ -629,12 +631,9 @@ def train(
     return loss
 
 
-
-import warnings
-
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-8")
+@click.option("--project", default="training-attempt-0")
 @click.option("--network-airport-codes", default="LGA", help="airport codes")
 
 @click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
@@ -668,16 +667,16 @@ import warnings
 @click.option("--auto-split-limit", default=20, type=int) # was 10
 @click.option("--auto-split-random", is_flag=True) 
 def train_cmd(
-    project, network_airport_codes, 
-    svi_steps, n_samples, svi_lr, 
-    plot_every, rng_seed,
-    gamma, dt, n_elbo_particles, finer,
-    posterior_guide, 
-    y_threshold, x_threshold,
-    init_visibility_threshold, init_ceiling_threshold,
-    day_strs, year, month, start_day, end_day, all_days,
-    auto_split, auto_split_limit, auto_split_random
-):
+        project, network_airport_codes, 
+        svi_steps, n_samples, svi_lr, 
+        plot_every, rng_seed,
+        gamma, dt, n_elbo_particles, finer,
+        posterior_guide, 
+        y_threshold, x_threshold,
+        init_visibility_threshold, init_ceiling_threshold,
+        day_strs, year, month, start_day, end_day, all_days,
+        auto_split, auto_split_limit, auto_split_random
+    ):
     print(f"Running training with project: {project}, network_airport_codes: {network_airport_codes}, "
           f"svi_steps: {svi_steps}, n_samples: {n_samples}, svi_lr: {svi_lr}, "
             f"plot_every: {plot_every}, rng_seed: {rng_seed}, gamma: {gamma}, dt: {dt}, "
