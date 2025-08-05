@@ -53,17 +53,20 @@ def load_all_data():
 
 
 def load_remapped_data_bts(
-        dates: pd.DatetimeIndex) -> list[pd.DataFrame]:
-    script_dir = Path(__file__).parent 
+        dates: pd.DatetimeIndex,
+        airport: str) -> list[pd.DataFrame]:
+
+    script_dir = Path(__file__).parent
     data_dir = script_dir.parent.parent / 'data'
     # remapped_dir = data_dir / 'bts_remapped/lga_reduced_2010-2019_clean_daily/parquet'
-    remapped_dir = ...
+    remapped_dir = data_dir / f'bts_remapped/{airport}/'
 
     data = {}
 
     for date in dates:
         year, month, day = f'{date.year:04d}', f'{date.month:02d}', f'{date.day:02d}'
         # df_path = remapped_dir / f'{year}/{month}/lga_reduced_{year}_{month}_{day}_clean.parquet'
+        df_path = remapped_dir / f'{year}/clean_daily/parquet/{month}/On_Time_Reporting_Carrier_On_Time_Performance_(1987_{year}_{month}_{day}_{airport}.parquet'
         df = pd.read_parquet(df_path)
         data[date.strftime('%Y-%m-%d')] = df
     

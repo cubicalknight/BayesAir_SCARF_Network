@@ -114,6 +114,8 @@ class NetworkState:
             for flight in flights:
                 if flight.simulated_cancelled is None:
                     var_name = var_prefix + str(flight) + "_cancelled"
+                    # print(var_name)
+                    # print(flight)
                     flight.simulated_cancelled = pyro.sample(
                         var_name,
                         dist.RelaxedBernoulliStraightThrough(

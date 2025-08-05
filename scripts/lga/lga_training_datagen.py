@@ -22,7 +22,10 @@ from bayes_air.model import augmented_air_traffic_network_model_simplified
 # from bayes_air.network import NetworkState, AugmentedNetworkState
 # from bayes_air.schedule import split_and_parse_full_schedule
 
+from bayes_air.types.util import CoreAirports
+
 from tqdm import tqdm
+import tqdm
 
 import pyro.distributions as dist
 from scripts.utils import (
@@ -158,19 +161,20 @@ def single_particle_y_given_z(model, sample):
 
 
 from multiprocessing import Pool, cpu_count
-import tqdm
 
 def train(
-    day_strs_list,
-    year, month,
-    use_gpu=False
-):
+        day_strs_list,
+        year, month,
+        use_gpu=False
+    ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     rng_seed = 1
     pyro.set_rng_seed(int(rng_seed))
 
-    network_airport_codes = ['LGA']
+    # network_airport_codes = ['LGA']
+    # network_airport_codes = ['JFK', 'LGA', 'EWR']
+    network_airport_codes = ['JFK']
     dt = .1
 
     if use_gpu:
@@ -204,7 +208,7 @@ def train(
 
         # gather data
         days = pd.to_datetime(day_strs)
-        data = ba_dataloader.load_remapped_data_bts(days)
+        data = ba_dataloader.load_remapped_data_bts(days, network_airport_codes[0])
         name = ", ".join(day_strs)
 
         num_days = len(days)
@@ -313,14 +317,14 @@ def train(
 
     dir_path = os.path.dirname(__file__)
     # save_path = os.path.join(dir_path, "model_logprobs")
-    save_path = os.path.join(dir_path, "model_logprobs_finer_testing")
+    save_path = os.path.join(dir_path, f"{network_airport_codes[0]}_model_logprobs_finer_testing")
     os.makedirs(save_path, exist_ok=True)
     fname = (
         f"{year:04d}_{month:02d}_output_dict.pkl" 
         if year is not None and month is not None else
         f"output_dict.pkl" 
     )
-    with open(os.path.join(save_path, po), 'wb+') as handle:
+    with open(os.path.join(save_path, fname), 'wb+') as handle:
         dill.dump(output_dict, handle)
 
     list_dict = {
@@ -351,7 +355,7 @@ def train(
 
 
 @click.command()
-@click.option("--day-strs", default=None)
+@click.option("--day-strs", default="2019-07-15")
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
 @click.option("--year", default=None, type=int)
 @click.option("--month", default=None, type=int)
