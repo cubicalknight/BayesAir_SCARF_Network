@@ -1,3 +1,4 @@
+# %%
 """Run the simulation for a LGA focused augmented network"""
 import os
 from itertools import combinations
@@ -209,6 +210,7 @@ def train(
         auto_split_random,
         use_gpu=False,
     ):
+    print('Starting training...')
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
     pyro.set_rng_seed(int(rng_seed))
@@ -227,28 +229,28 @@ def train(
     matplotlib.use("Agg")
 
     dir_path = Path(__file__).parent
-    extras_path = dir_path / 'extras'
+    extras_path = dir_path / 'extras' / 'JFK'
 
     # TODO generate these using the jupyter file
-    processed_visibility = pd.read_csv(extras_path / 'processed_visibility.csv')
+    processed_visibility = pd.read_csv(extras_path / f'{network_airport_codes[0]}_w_processed_visibility.csv')
     visibility_dict = dict(processed_visibility.values)
-    processed_ceiling = pd.read_csv(extras_path / 'processed_ceiling.csv')
+    processed_ceiling = pd.read_csv(extras_path / f'{network_airport_codes[0]}_w_processed_ceiling.csv')
     ceiling_dict = dict(processed_ceiling.values)
 
-    processed_x = pd.read_csv(extras_path / 'x_capacity_counts.csv') # TODO: option
+    processed_x = pd.read_csv(extras_path / f'{network_airport_codes[0]}_x_capacity_counts.csv') # TODO: option
     x_dict = dict(processed_x.values)
-    processed_y = pd.read_csv(extras_path / 'y_event_delays.csv') # TODO: option
+    processed_y = pd.read_csv(extras_path / f'{network_airport_codes[0]}_y_event_delays.csv') # TODO: option
     y_dict = dict(processed_y.values)
 
     # TODO regenerate wrt each apt
     model_logprobs_name = (
-        '2018-2019_finer_output_dict.pkl' 
-        if finer else '2018-2019_output_dict.pkl'
+        '2019_finer_output_dict.pkl' 
+        if finer else '2019_output_dict.pkl'
     )
     with open(extras_path / model_logprobs_name, 'rb') as f:
         model_logprobs_output_dict = dill.load(f)
 
-    with open(extras_path / '2018-2019_s_guide_dist_dict.pkl', 'rb') as f:
+    with open(extras_path / '2019_s_guide_dist_dict.pkl', 'rb') as f:
         s_guide_dist_dict = dill.load(f)
 
     # SETTING UP THE MODEL AND STUFF
@@ -284,8 +286,9 @@ def train(
             "yx_group": yx_group,
             "y_label": torch.tensor([y_label]).to(device),
             "x_label": torch.tensor([x_label]).to(device),
-            "visibility": visibility_dict[name],
-            "ceiling": ceiling_dict[name],
+            # hardcode fix
+            "visibility": visibility_dict[name + ' 00:00:00+00:00'],
+            "ceiling": ceiling_dict[name + ' 00:00:00+00:00'],
             "s_guide_dist": s_guide_dist,
             "model_logprobs": model_logprobs_output_dict[name],
             "z_mu": s_guide_dist.loc.item(),
@@ -633,8 +636,8 @@ def train(
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="training-attempt-0")
-@click.option("--network-airport-codes", default="LGA", help="airport codes")
+@click.option("--project", default="jfk-training-attempt-0")
+@click.option("--network-airport-codes", default="JFK", help="airport codes")
 
 @click.option("--svi-steps", default=1000, help="Number of SVI steps to run")
 @click.option("--n-samples", default=10000, help="Number of posterior samples to draw")
@@ -655,7 +658,7 @@ def train(
 @click.option("--init-visibility-threshold", default=1.5, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)
 
-@click.option("--day-strs", default=None)
+@click.option("--day-strs", default='2019-07-15')
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
 @click.option("--year", default=None, type=int)
 @click.option("--month", default=None, type=int)

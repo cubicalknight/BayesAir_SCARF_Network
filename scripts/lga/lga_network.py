@@ -1,5 +1,10 @@
 # %%
 import sys
+import io
+
+# sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 """Run the simulation for a LGA and JFK focused augmented network"""
 import os
 from itertools import combinations
@@ -989,7 +994,8 @@ def make_states(data, network_airport_codes):
 
 # TODO: deal with all of the above
 
-
+def remove_non_ascii(s):
+    return ''.join(c for c in s if ord(c) < 128)
 
 
 def train(
@@ -1034,7 +1040,7 @@ def train(
 
     # gather data
     days = pd.to_datetime(day_strs)
-    data = ba_dataloader.load_remapped_data_bts(days)
+    data = ba_dataloader.load_remapped_data_bts(days, network_airport_codes[0])
 
     num_days = len(days)
     num_flights = sum([len(df) for df in data.values()])
@@ -1200,7 +1206,12 @@ def train(
         else:
             color = (200, 200, 200)
         # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
-        pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
+        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
+        # safe_run_name = remove_non_ascii(run_name)
+        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{safe_run_name}\n  task {pbars.id()}', color=color)
+        pbar = Pbar(range(svi_steps), manager=pbars, name=f'task {pbars.id()}', color=color)
+
+
 
     
     for i in pbar:
@@ -1209,7 +1220,7 @@ def train(
 
         with pyro.plate("samples", n_samples, dim=-1):
             posterior_samples = guide(states)
-        z_samples = [posterior_samples[f'LGA_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
+        z_samples = [posterior_samples[f'JFK_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
         mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
 
         elbo_from_prior = (
@@ -1266,6 +1277,7 @@ def train(
         wandb.log(log_dict)
 
     wandb.save(f"checkpoints/{run_name}/checkpoint_{svi_steps - 1}.pt")
+    print("Saving final params and guide...")
 
     output_dict = {
         'model': model,
@@ -1307,8 +1319,8 @@ import warnings
 
 # TODO: add functionality to pick days
 @click.command()
-@click.option("--project", default="bayes-air-atrds-attempt-7")
-@click.option("--network-airport-codes", default="LGA", help="airport codes")
+@click.option("--project", default="jfk-training-attempt-0")
+@click.option("--network-airport-codes", default="JFK", help="airport codes")
 
 @click.option("--svi-steps", default=500, help="Number of SVI steps to run")
 @click.option("--n-samples", default=5000, help="Number of posterior samples to draw")
@@ -1328,7 +1340,7 @@ import warnings
 # failure: 4 (each guide, two scale levels)
 # for scale levels, let's try .1 and .25 first maybe?
 
-@click.option("--day-strs", default=None)
+@click.option("--day-strs", default='2019-07-15')
 @click.option("--year", default=2019, type=int)
 @click.option("--month", default=7, type=int)
 @click.option("--start-day", default=None)
@@ -1462,8 +1474,19 @@ def train_cmd(
     if multiprocess:
         with Pool(processes=processes, initializer=initializer()) as p:
             global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
-            for _ in global_pbar:
-                pass
+            try:
+                results = list(global_pbar)
+            except Exception as e:
+                print("An error occurred during multiprocessing:")
+                print(e)
+                print("You can try running without --multiprocess to debug.")
+            # try:
+            #     for _ in global_pbar:
+            #         pass
+            # except UnicodeEncodeError as e:
+            #     print("UnicodeEncodeError encountered. This is likely due to a non-ASCII character in the run name.")
+            #     print("You can try running with --wandb-silent to avoid this error.")
+            #     print("Error details:", e)
 
     else:
         pbar = tqdm(range(len(day_strs_list)))
