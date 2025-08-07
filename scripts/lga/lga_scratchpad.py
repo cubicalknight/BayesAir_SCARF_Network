@@ -54,23 +54,24 @@ def deal_with_model_logprobs(finer=False):
 
 
 def deal_with_checkpoints():
+    start = '2019-07-15'
+    end = '2019-07-15'
 
-    checkpoints_dir = dir_path / "bayes-air-atrds-attempt-7/checkpoints/LGA/"
-    days = pd.date_range(start='2018-01-01', end='2019-12-31', freq='D').strftime('%Y-%m-%d').to_list()
+    checkpoints_dir = dir_path / f"jfk-training-attempt-0/checkpoints/JFK/"
+    days = pd.date_range(start=start, end=end, freq='D').strftime('%Y-%m-%d').to_list()
 
     s_guide_dist_dict = {}
     s_guide_dist_params_dict = {}
 
     pbar = tqdm(days)
     for name in pbar:
-
         with open(checkpoints_dir / f'{name}/empty_0.00_gaussian/final/output_dict.pkl', 'rb') as f:
             s_guide_output_dict = dill.load(f)
         
         s_guide = s_guide_output_dict["guide"]
         with pyro.plate("samples", 100000, dim=-1):
             posterior_samples = s_guide()
-        posterior_samples = posterior_samples["LGA_0_mean_service_time"]
+        posterior_samples = posterior_samples["JFK_0_mean_service_time"]
 
         mu = posterior_samples.mean().detach().item()
         sigma = torch.std(posterior_samples).detach().item()
@@ -80,18 +81,19 @@ def deal_with_checkpoints():
         s_guide_dist_dict[name] = s_guide_dist
         s_guide_dist_params_dict[name] = (mu, sigma)
 
-    with open(dir_path / 'extras/2018-2019_s_guide_dist_dict.pkl', 'wb+') as handle:
+    print('Saving s_guide_dist_dict and s_guide_dist_params_dict')
+    with open(dir_path / 'extras/JFK/2019_s_guide_dist_dict.pkl', 'wb+') as handle:
         dill.dump(s_guide_dist_dict, handle)
 
-    with open(dir_path / 'extras/2018-2019_s_guide_dist_params_dict.pkl', 'wb+') as handle:
+    with open(dir_path / 'extras/JFK/2019_s_guide_dist_params_dict.pkl', 'wb+') as handle:
         dill.dump(s_guide_dist_params_dict, handle)
 
     df = pd.DataFrame(
         [(k,) + v for k,v in s_guide_dist_params_dict.items()], 
         columns=['date', 'mu', 'sigma']
     )
-    df.to_csv(dir_path / 'extras/2018-2019_s_guide_dist_params.csv', index=False)
-    df.to_parquet(dir_path / 'extras/2019_s_guide_dist_params.parquet')
+    df.to_csv(dir_path / 'extras/JFK/2019_s_guide_dist_params.csv', index=False)
+    df.to_parquet(dir_path / 'extras/JFK/2019_s_guide_dist_params.parquet')
 
 
 
@@ -131,6 +133,6 @@ def deal_with_dataloader():
 
 
 if __name__ == '__main__':
-    # deal_with_checkpoints()
-    deal_with_model_logprobs(finer=True)
+    deal_with_checkpoints()
+    # deal_with_model_logprobs(finer=True)
     # deal_with_dataloader()

@@ -737,10 +737,7 @@ def augmented_air_traffic_network_model(
     return output_states
 
 
-
-
-
-
+# TODO: ID what was simplified
 def augmented_air_traffic_network_model_simplified(
     states: list[AugmentedNetworkState],
     delta_t: float = 0.1,

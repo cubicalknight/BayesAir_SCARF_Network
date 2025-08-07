@@ -380,6 +380,11 @@ def train_cmd(day_strs, year, month, start_day, end_day):
     day_strs_list = [
         [day_str] for day_str in day_strs
     ]
+
+    if year is None:
+        year = pd.to_datetime(day_strs[0]).year
+    if month is None:
+        month = pd.to_datetime(day_strs[0]).month
     
     train(day_strs_list, year, month)
 
