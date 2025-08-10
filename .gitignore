@@ -174,3 +174,7 @@ data/bts_*/*_decade/*
 cached_*/
 /data
 /scripts/lga/extras
+/scripts/lga/DTW_model_logprobs_finer_testing
+/scripts/lga/LAS_model_logprobs_finer_testing
+/scripts/lga/LAX_model_logprobs_finer_testing
+/scripts/lga/SFO_model_logprobs_finer_testing

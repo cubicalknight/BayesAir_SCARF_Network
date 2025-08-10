@@ -165,7 +165,8 @@ from multiprocessing import Pool, cpu_count
 def train(
         day_strs_list,
         year, month,
-        use_gpu=False
+        use_gpu=False,
+        network_airport_codes=None
     ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
@@ -174,7 +175,8 @@ def train(
 
     # network_airport_codes = ['LGA']
     # network_airport_codes = ['JFK', 'LGA', 'EWR']
-    network_airport_codes = ['JFK']
+    if network_airport_codes is None:
+        network_airport_codes = ['JFK']
     dt = .1
 
     if use_gpu:
@@ -213,7 +215,7 @@ def train(
 
         num_days = len(days)
         num_flights = sum([len(df) for df in data.values()])
-        print(f"{name} -> days: {num_days}, flights: {num_flights}")
+        # print(f"{name} -> days: {num_days}, flights: {num_flights}")
 
         # make things with the data
         travel_times_dict, observations_df = \
@@ -306,11 +308,11 @@ def train(
             pf = failure_prior.log_prob(tz)
             pn = nominal_prior.log_prob(tz)
             # print(f'\n{subsample["name"]} {z:.3f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
-            print(f'\n{subsample["name"]} {z:.4f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
+            # print(f'\n{subsample["name"]} {z:.4f} {l.item():.3f} {pf.item():.3f} {pn.item():.3f}')
             # output_dict[subsample["name"]][zi-10] = l
             output_dict[subsample["name"]][zi-100] = l
         
-        print(output_dict[subsample["name"]])
+        # print(output_dict[subsample["name"]])
 
     for name, subsample in tqdm.tqdm(subsamples.items()):
         process_subsamples(subsample)
@@ -333,7 +335,7 @@ def train(
     }
 
     df = pd.DataFrame.from_dict(list_dict,orient='index').transpose()
-    print(df)
+    # print(df)
     fname = (
         f"{year:04d}_{month:02d}_output.csv" 
         if year is not None and month is not None else
@@ -361,8 +363,9 @@ def train(
 @click.option("--month", default=None, type=int)
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
+@click.option("--network-airport-codes", default=None, type=str)
 
-def train_cmd(day_strs, year, month, start_day, end_day):
+def train_cmd(day_strs, year, month, start_day, end_day, network_airport_codes):
     if day_strs is not None:
         day_strs = day_strs.split(',')
     elif year is not None and month is not None:
@@ -385,8 +388,10 @@ def train_cmd(day_strs, year, month, start_day, end_day):
         year = pd.to_datetime(day_strs[0]).year
     if month is None:
         month = pd.to_datetime(day_strs[0]).month
-    
-    train(day_strs_list, year, month)
+
+    network_airport_codes = [network_airport_codes]
+
+    train(day_strs_list, year, month, use_gpu=False, network_airport_codes=network_airport_codes)
 
 
 if __name__ == "__main__":
