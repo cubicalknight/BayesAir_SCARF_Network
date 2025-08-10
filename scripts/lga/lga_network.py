@@ -639,17 +639,21 @@ def get_hourly_delays(
     return get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb)
     
 
-def get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, wandb=True, relu=True):
+def get_hourly_delays_from_z_sample(model, posterior_samples, states, observations_df, airport, wandb=True, relu=True):
 
     predictive = pyro.infer.Predictive(
         model=model,
         posterior_samples=posterior_samples,
     )
 
+    # print(predictive)
+
     samples = predictive(
         states, 
         obs_none=True,
     )
+    # print(samples)
+    # sys.exit(0)
 
     # conditioning_dict = {
     #     'LGA_0_mean_service_time': posterior_samples['LGA_0_mean_service_time']
@@ -722,8 +726,8 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
         }
     )
 
-    # print(samples_df)
-    # print(observations_df)
+    # print('samples_df:', samples_df)
+    # print('observations_df:', observations_df)
 
     merged_df = pd.merge(
         samples_df, 
@@ -737,13 +741,15 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
         how='inner',
     )
 
+    # print('merged_df:', merged_df)
+
     dep_mask_successful = (
-        (merged_df["origin_airport"] == "LGA")
+        (merged_df["origin_airport"] == airport)
         & (merged_df["actual_departure_time"] != 0)
         & (merged_df["sample_departure_time"] != 0)
     )
     arr_mask_successful = (
-        (merged_df["destination_airport"] == "LGA")
+        (merged_df["destination_airport"] == airport)
         & (merged_df["actual_arrival_time"] != 0)
         & (merged_df["sample_arrival_time"] != 0)
     )
@@ -959,6 +965,12 @@ def make_travel_times_dict_and_observation_df(data, network_airport_codes):
         ]
     ]
 
+    observations_df["flight_number"] = (
+        all_data_df.loc[~all_data_df["cancelled"], "Reporting_Airline"].astype(str)
+        + all_data_df.loc[~all_data_df["cancelled"], "flight_number"].astype(str)
+    )
+
+
     return travel_times_dict, observations_df
 
 
@@ -993,9 +1005,6 @@ def make_states(data, network_airport_codes):
     return states
 
 # TODO: deal with all of the above
-
-def remove_non_ascii(s):
-    return ''.join(c for c in s if ord(c) < 128)
 
 
 def train(
@@ -1129,7 +1138,7 @@ def train(
     # Create an autoguide for the model
     init_loc_fn = pyro.infer.autoguide.initialization.init_to_value(
         values={
-            f'LGA_{t_idx}_mean_service_time': torch.tensor(.015).to(device)
+            f'{network_airport_codes[0]}_{t_idx}_mean_service_time': torch.tensor(.015).to(device)
             for t_idx in range(3)
         },
         fallback=pyro.infer.autoguide.initialization.init_to_median
@@ -1212,15 +1221,13 @@ def train(
         pbar = Pbar(range(svi_steps), manager=pbars, name=f'task {pbars.id()}', color=color)
 
 
-
-    
     for i in pbar:
         loss = svi.step(states)
         losses.append(loss)
 
         with pyro.plate("samples", n_samples, dim=-1):
             posterior_samples = guide(states)
-        z_samples = [posterior_samples[f'JFK_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
+        z_samples = [posterior_samples[f'{network_airport_codes[0]}_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
         mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
 
         elbo_from_prior = (

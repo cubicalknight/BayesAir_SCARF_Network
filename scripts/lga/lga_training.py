@@ -229,7 +229,7 @@ def train(
     matplotlib.use("Agg")
 
     dir_path = Path(__file__).parent
-    extras_path = dir_path / 'extras' / 'JFK'
+    extras_path = dir_path / 'extras' / network_airport_codes[0]
 
     # TODO generate these using the jupyter file
     processed_visibility = pd.read_csv(extras_path / f'{network_airport_codes[0]}_w_processed_visibility.csv')
