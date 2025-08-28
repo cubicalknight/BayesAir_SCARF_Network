@@ -653,7 +653,7 @@ def train(
 # TODO: weights for things in the objective
 
 # thresholds: TODO
-@click.option("--y-threshold", default=0.25, type=float) # hours
+@click.option("--y-threshold", default=0.25, type=float) # hours (15 minutes)
 @click.option("--x-threshold", default=72.0, type=float)
 @click.option("--init-visibility-threshold", default=1.5, type=float) # hours
 @click.option("--init-ceiling-threshold", default=1.0, type=float)

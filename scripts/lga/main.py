@@ -182,6 +182,8 @@ class ExtraDataProcessing:
 
 
 def deal_with_checkpoints(airport):
+    dir_path = Path(__file__).parent.resolve()
+
     start = '2019-07-15'
     end = '2019-07-15'
 
@@ -281,8 +283,61 @@ def deal_with_model_logprobs(dir_path, airport, finer=False):
     print(f'Saved to {dir_path / f"{fname_base}_dict.pkl"}')
 
 
+# def combined_test():
+#     network_airport_codes = 'LAX, SFO'
+
+#     lga_training_datagen.train_cmd.main([
+#         '--day-strs', '2019-07-15',
+#         '--network-airport-codes', network_airport_codes,
+#     ], standalone_mode=False)
+
+
+def single_test(airport):
+    dir_path = Path(__file__).parent.resolve()
+
+    print(f"--- Processing airport: {airport} ---")
+    lga_training_datagen.train_cmd.main([
+        '--year', '2019',
+        '--month', '07',
+        '--network-airport-codes', airport,
+    ], standalone_mode=False)
+
+def test_train_no_cap(airport):
+    # dir_path = Path(__file__).parent.resolve()
+
+    # print('Running extra data processing')
+    # deal_with_model_logprobs(dir_path, airport, finer=True)
+
+    # ExtraDataProcessing().process_extras(
+    #     airport=airport,
+    #     start='2019-07-15',
+    #     end='2019-07-16', # must be exclusive so add one day
+    # )
+
+    # lga_network.train_cmd.main([
+    #     '--project', f'{airport.lower()}-training-attempt-no-cap',
+    #     '--network-airport-codes', airport,
+    # ], standalone_mode=False)
+
+    print('Dealing with checkpoints')
+    deal_with_checkpoints(airport)
+
+    print('Running final training')
+    lga_training.train_cmd.main([
+        '--project', f'{airport.lower()}-training-attempt-no-cap',
+        '--x-threshold', '200',
+        '--network-airport-codes', airport,
+    ], standalone_mode=False)
+
+
 if __name__ == "__main__":
-    apts = ['LAS', 'LAX', 'SFO']
+    apts = ['LAX']
+    # single_test(apt)
+    # test_train_no_cap(apt)
+
+    # combined_test()
+
+    # apts = ['LAS', 'LAX', 'SFO']
     dir_path = Path(__file__).parent.resolve()
 
     for airport in apts:

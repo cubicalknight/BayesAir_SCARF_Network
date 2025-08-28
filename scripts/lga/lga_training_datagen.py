@@ -17,7 +17,7 @@ import dill
 from pathlib import Path
 
 import bayes_air.utils.dataloader as ba_dataloader
-import wandb
+# import wandb
 from bayes_air.model import augmented_air_traffic_network_model_simplified
 # from bayes_air.network import NetworkState, AugmentedNetworkState
 # from bayes_air.schedule import split_and_parse_full_schedule
@@ -320,6 +320,7 @@ def train(
     dir_path = os.path.dirname(__file__)
     # save_path = os.path.join(dir_path, "model_logprobs")
     save_path = os.path.join(dir_path, f"{network_airport_codes[0]}_model_logprobs_finer_testing")
+    # save_path = os.path.join(dir_path, f"combined_testing_model_logprobs_finer_testing")
     os.makedirs(save_path, exist_ok=True)
     fname = (
         f"{year:04d}_{month:02d}_output_dict.pkl" 
@@ -357,7 +358,7 @@ def train(
 
 
 @click.command()
-@click.option("--day-strs", default="2019-07-15")
+@click.option("--day-strs", default=None, type=str)
 # @click.option("--day-strs-path", default=None) # TODO: make this!!
 @click.option("--year", default=None, type=int)
 @click.option("--month", default=None, type=int)
@@ -391,6 +392,9 @@ def train_cmd(day_strs, year, month, start_day, end_day, network_airport_codes):
 
     network_airport_codes = [network_airport_codes]
 
+    # print(day_strs_list)
+    # import sys
+    # sys.exit(0)
     train(day_strs_list, year, month, use_gpu=False, network_airport_codes=network_airport_codes)
 
 
