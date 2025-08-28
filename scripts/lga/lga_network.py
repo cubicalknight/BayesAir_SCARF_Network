@@ -816,6 +816,13 @@ def get_hourly_delays_from_z_sample(model, posterior_samples, states, observatio
         - departure_delays_df["scheduled_departure_time"]
     )
 
+    # print(departure_delays_df['actual_departure_delay'])
+    # display all rows and columns
+    pd.set_option("display.max_rows", None)
+    pd.set_option("display.max_columns", None)
+
+    # display(departure_delays_df)
+
     if relu:
         departure_delays_df["sample_departure_delay"] = departure_delays_df["sample_departure_delay"].clip(lower=0)
         departure_delays_df["actual_departure_delay"] = departure_delays_df["actual_departure_delay"].clip(lower=0)
@@ -1022,7 +1029,7 @@ def train(
     pbars,
 
     rem_args,
-    use_gpu=False
+    use_gpu=True
     ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
     pyro.enable_validation(True)
