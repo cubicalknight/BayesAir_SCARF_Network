@@ -1,4 +1,5 @@
 """Define a probabilistic model for an air traffic network."""
+import contextlib
 from copy import deepcopy
 
 import pyro
@@ -896,6 +897,14 @@ def augmented_air_traffic_network_model_simplified(
     else:
         mst_dist = mst_prior
 
+    # is_batch = mst_as_param is not None and isinstance(mst_as_param, torch.Tensor)
+    # if is_batch:
+    #     num_particles = len(mst_as_param)
+    #     plate_context = pyro.plate("z_batch", num_particles)
+    # else:
+    #     plate_context = contextlib.nullcontext()
+
+    # with plate_context:
     with pyro.poutine.scale(scale=mst_prior_weight):
         airport_service_times = {
             t_idx: {

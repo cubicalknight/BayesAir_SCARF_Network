@@ -29,6 +29,7 @@ from bayes_air.network import NetworkState, AugmentedNetworkState
 from bayes_air.schedule import split_and_parse_full_schedule
 
 from tqdm import tqdm
+import time
 
 import pyro.distributions as dist
 from scripts.utils import (
@@ -1027,7 +1028,6 @@ def train(
     rng_seed,
     multiprocess,
     pbars,
-
     rem_args,
     use_gpu=True
     ):
@@ -1364,7 +1364,8 @@ import warnings
 @click.option("--all-combos", is_flag=True)
 @click.option("--empty-only", is_flag=True)
 
-@click.option("--multiprocess/--no-multiprocess", default=True)
+# @click.option("--multiprocess/--no-multiprocess", default=False)
+@click.option("--multiprocess", is_flag=True)
 @click.option("--processes", default=None, type=int)
 @click.option("--wandb-silent", is_flag=True)
 @click.option("--empty-only", is_flag=True)
@@ -1449,7 +1450,6 @@ def train_cmd(
     else:
         ppp_params = [(prior_type, prior_scale, posterior_guide,)]
 
-
     if multiprocess:
         pbars = PbarPool(width=100)
         def initializer():
@@ -1458,21 +1458,21 @@ def train_cmd(
         warnings.simplefilter("ignore")
         os.environ["PYTHONWARNINGS"] = "ignore"
 
-    base_func = functools.partial(
-        train,
-        project,
-        network_airport_codes,
-        svi_steps,
-        n_samples,
-        svi_lr,
-        gamma,
-        dt,
-        n_elbo_particles,
-        plot_every,
-        rng_seed,
-        multiprocess,
-        pbars,
-    )
+        base_func = functools.partial(
+            train,
+            project,
+            network_airport_codes,
+            svi_steps,
+            n_samples,
+            svi_lr,
+            gamma,
+            dt,
+            n_elbo_particles,
+            plot_every,
+            rng_seed,
+            multiprocess,
+            # pbars,
+        )
 
     rem_args = [
         (day_strs_list[i], *(ppp_params[j]))
@@ -1484,9 +1484,29 @@ def train_cmd(
 
     if processes is None:
         processes = cpu_count()
+        print(f"Using {processes} processes")
 
     if multiprocess:
         with Pool(processes=processes, initializer=initializer()) as p:
+            # results_iterator = p.imap_unordered(base_func, rem_args)
+            
+            # # 4. Wrap the iterator with tqdm
+            # # This is the only line you need for the progress bar.
+            # # We use `total` to tell tqdm the total number of jobs.
+            # progress_iterator = tqdm(results_iterator, total=len(rem_args))
+            
+            # # 5. Loop over the tqdm-wrapped iterator
+            # print("Starting processing...")
+            # start_time = time.monotonic()
+
+            # # The loop will now automatically display progress
+            # for result in progress_iterator:
+            #     # You can process your results here if needed
+            #     pass
+
+            # end_time = time.monotonic()
+            # print(f"\nProcessing complete!")
+            # print(f"Total execution time: {end_time - start_time:.2f} seconds")
             global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
             try:
                 results = list(global_pbar)
@@ -1509,6 +1529,7 @@ def train_cmd(
             pppbar = tqdm(range(len(ppp_params)), leave=False)
             pppbar.set_description('param combo')
             for j in pppbar:
+                remaining_args = (day_strs_list[i], *ppp_params[j])
                 train(
                     project,
                     network_airport_codes,
@@ -1522,11 +1543,12 @@ def train_cmd(
                     rng_seed,
                     False,
                     None,
-                    day_strs_list[i],
+                    remaining_args
+                    # day_strs_list[i],
                     # prior_type,
                     # prior_scale,
                     # posterior_guide,
-                    *(ppp_params[j])
+                    # *(ppp_params[j])
                 )
             # print(day_strs_list[i], *(ppp_params[j]))
 

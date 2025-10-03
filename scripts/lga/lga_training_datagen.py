@@ -15,6 +15,7 @@ import functools
 import dill
 # import sys
 from pathlib import Path
+import multiprocessing
 
 import bayes_air.utils.dataloader as ba_dataloader
 # import wandb
@@ -59,6 +60,40 @@ plot_service_times = functools.partial(
     transform=torch.exp,
     xlim=(.005, .030) # new
 )
+
+@torch.no_grad
+def process_day_worker(args):
+    """
+    Worker function for parallel processing. It processes a single day's
+    subsample and returns the calculated log-probabilities.
+    """
+    # Unpack the arguments tuple
+    subsample, device = args
+    
+    name = subsample["name"]
+    model = subsample["model"]
+    
+    # Create a tensor to hold the results for this specific day
+    # This tensor is created and lives only within this worker process
+    # result_tensor = torch.zeros((300,), requires_grad=False).to(device)
+
+    # The core computation loop for one day
+    # Note: The inner tqdm progress bar might create messy, interleaved output.
+    # You can remove it for a cleaner console log.
+    for zi in tqdm.tqdm(range(100, 400)):
+        z = zi / 10000.0
+        tz = torch.tensor(z, requires_grad=False).to(device)
+        
+        # single_particle_y_given_z is called here
+        l = single_particle_y_given_z(model, tz)
+        
+        result_tensor[zi - 100] = l
+    
+    # z_values = torch.arange(199, 400, device=device, dtype=torch.float32) / 10000.0
+    # result_tensor = single_particle_y_given_z(model, z_values)
+
+    # Return the day's name (as a key) and the computed tensor (as the value)
+    # return (name, result_tensor)
 
 
 def single_particle_model_log_prob(model, states):
@@ -169,7 +204,7 @@ def train(
         network_airport_codes=None
     ):
     pyro.clear_param_store()  # avoid leaking parameters across runs
-    pyro.enable_validation(True)
+    # pyro.enable_validation(True)
     rng_seed = 1
     pyro.set_rng_seed(int(rng_seed))
 
@@ -182,6 +217,7 @@ def train(
     if use_gpu:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if torch.cuda.is_available():
+            print('Using GPU')
             torch.set_default_device('cuda')
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
     else:
@@ -224,6 +260,18 @@ def train(
             ) 
         states = make_states(data, network_airport_codes)
 
+        if use_gpu:
+            # Assuming `states` is a dictionary of tensors. 
+            # If it's another structure, adapt accordingly.
+            for i, item in enumerate(states):
+                if isinstance(item, torch.Tensor):
+                    states[i] = item.to(device)
+            
+            # Do the same for travel_times_dict if it contains tensors
+            for key, tensor in travel_times_dict.items():
+                if isinstance(tensor, torch.Tensor):
+                    travel_times_dict[key] = tensor.to(device)
+
         # set up common model arguments
         model = functools.partial(
             augmented_air_traffic_network_model_simplified,
@@ -237,6 +285,7 @@ def train(
             include_cancellations=False,
             mean_service_time_effective_hrs=mst_effective_hrs,
             delta_t=dt,
+            device=device,
 
             source_use_actual_departure_time=True,
             # source_use_actual_late_aircraft_delay=True,
@@ -290,6 +339,26 @@ def train(
     failure_prior = mst_prior_failure
     nominal_prior = mst_prior_nominal
 
+    # --- PARALLEL PROCESSING SECTION ---
+    # Prepare arguments for each worker. Each worker gets a subsample and the device.
+    worker_args = [(subsample, device) for subsample in subsamples.values()]
+
+    # Use one less than the total number of cores to keep the system responsive
+    num_workers = max(1, cpu_count() - 1)
+    print(f"\nStarting parallel processing with {num_workers} workers...")
+
+    output_dict = {}
+    with Pool(processes=num_workers) as pool:
+        # Use pool.imap_unordered to process days as they finish, which is more efficient.
+        # The main tqdm wrapper will show progress for the total number of days.
+        results_iterator = pool.imap_unordered(process_day_worker, worker_args)
+        
+        for name, result_tensor in tqdm.tqdm(results_iterator, total=len(subsamples)):
+            output_dict[name] = result_tensor.cpu() # Ensure tensor is on CPU
+
+    print("Parallel processing complete.")
+
+    '''    
     output_dict = {}
 
     @torch.no_grad
@@ -316,7 +385,8 @@ def train(
 
     for name, subsample in tqdm.tqdm(subsamples.items()):
         process_subsamples(subsample)
-
+    '''
+    # NOTE save everything
     dir_path = os.path.dirname(__file__)
     # save_path = os.path.join(dir_path, "model_logprobs")
     save_path = os.path.join(dir_path, f"{network_airport_codes[0]}_model_logprobs_finer_testing")
@@ -365,8 +435,9 @@ def train(
 @click.option("--start-day", default=None)
 @click.option("--end-day", default=None)
 @click.option("--network-airport-codes", default=None, type=str)
+@click.option("--use-gpu", is_flag=True)
 
-def train_cmd(day_strs, year, month, start_day, end_day, network_airport_codes):
+def train_cmd(day_strs, year, month, start_day, end_day, network_airport_codes, use_gpu):
     if day_strs is not None:
         day_strs = day_strs.split(',')
     elif year is not None and month is not None:
@@ -395,7 +466,7 @@ def train_cmd(day_strs, year, month, start_day, end_day, network_airport_codes):
     # print(day_strs_list)
     # import sys
     # sys.exit(0)
-    train(day_strs_list, year, month, use_gpu=False, network_airport_codes=network_airport_codes)
+    train(day_strs_list, year, month, use_gpu, network_airport_codes=network_airport_codes)
 
 
 if __name__ == "__main__":

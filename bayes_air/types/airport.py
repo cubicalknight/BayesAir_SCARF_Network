@@ -330,6 +330,8 @@ class Airport:
         service_time = dist.Exponential(
             1.0 / self.mean_service_time.reshape(-1)
         ).rsample().squeeze()
+        # print(f"sampled service time {service_time} for {queue_entry.flight}")
+        # raise Exception("stop")
 
         # if service_time.size() != torch.Size([]):
         #     raise ValueError(service_time)
