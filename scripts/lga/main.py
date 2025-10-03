@@ -185,7 +185,7 @@ def deal_with_checkpoints(airport):
     dir_path = Path(__file__).parent.resolve()
 
     start = '2019-07-15'
-    end = '2019-07-15'
+    end = '2019-07-18'
 
     checkpoints_dir = dir_path / f"{airport.lower()}-training-attempt-0/checkpoints/{airport}/"
     days = pd.date_range(start=start, end=end, freq='D').strftime('%Y-%m-%d').to_list()
@@ -331,7 +331,7 @@ def test_train_no_cap(airport):
 
 
 if __name__ == "__main__":
-    apts = ['LAX']
+    apts = ['LGA']
     # single_test(apt)
     # test_train_no_cap(apt)
 
@@ -339,36 +339,45 @@ if __name__ == "__main__":
 
     # apts = ['LAS', 'LAX', 'SFO']
     dir_path = Path(__file__).parent.resolve()
+    # july_days = '2019-07-01,2019-07-02,2019-07-03,2019-07-04,2019-07-05,2019-07-06,2019-07-07,2019-07-08,2019-07-09,2019-07-10,2019-07-11,2019-07-12,2019-07-13,2019-07-14,2019-07-15,2019-07-16,2019-07-17,2019-07-18,2019-07-19,2019-07-20,2019-07-21,2019-07-22,2019-07-23,2019-07-24,2019-07-25,2019-07-26,2019-07-27,2019-07-28,2019-07-29,2019-07-30,2019-07-31'
+    july_days = '2019-07-15,2019-07-16,2019-07-17,2019-07-18'
+    # july_days = '2019-07-15'
 
     for airport in apts:
-        print(f"--- Processing airport: {airport} ---")
-        lga_training_datagen.train_cmd.main([
-            '--day-strs', '2019-07-15',
-            '--network-airport-codes', airport,
-        ], standalone_mode=False)
+        # print(f"--- Processing airport: {airport} ---")
+        # lga_training_datagen.train_cmd.main([
+        #     '--day-strs', july_days,
+        #     '--network-airport-codes', airport,
+        #     # '--use-gpu',
+        # ], standalone_mode=False)
+        # # raise ValueError('stop here')
+        # print('Running extra data processing')
+        # deal_with_model_logprobs(dir_path, airport, finer=True)
 
-        print('Running extra data processing')
-        deal_with_model_logprobs(dir_path, airport, finer=True)
-
-        ExtraDataProcessing().process_extras(
-            airport=airport,
-            start='2019-07-15',
-            end='2019-07-16', # must be exclusive so add one day
-        )
+        # ExtraDataProcessing().process_extras(
+        #     airport=airport,
+        #     start='2019-07-15',
+        #     end='2019-07-19', # must be exclusive so add one day
+        # )
 
         print('Running network training')
         lga_network.train_cmd.main([
             '--project', f'{airport.lower()}-training-attempt-0',
+            '--day-strs', july_days,
             '--network-airport-codes', airport,
+            '--multiprocess',
         ], standalone_mode=False)
-
+        # raise ValueError('stop here')
+        # NOTE also change code in respective method
         print('Dealing with checkpoints')
         deal_with_checkpoints(airport)
 
         print('Running final training')
         lga_training.train_cmd.main([
             '--project', f'{airport.lower()}-training-attempt-0',
+            '--day-strs', july_days,
             '--network-airport-codes', airport,
+            # '--use-gpu',
         ], standalone_mode=False)
 
 

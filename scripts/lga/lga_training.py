@@ -669,6 +669,7 @@ def train(
 @click.option("--auto-split", is_flag=True)
 @click.option("--auto-split-limit", default=20, type=int) # was 10
 @click.option("--auto-split-random", is_flag=True) 
+@click.option("--use-gpu", is_flag=True)
 def train_cmd(
         project, network_airport_codes, 
         svi_steps, n_samples, svi_lr, 
@@ -678,7 +679,7 @@ def train_cmd(
         y_threshold, x_threshold,
         init_visibility_threshold, init_ceiling_threshold,
         day_strs, year, month, start_day, end_day, all_days,
-        auto_split, auto_split_limit, auto_split_random
+        auto_split, auto_split_limit, auto_split_random, use_gpu
     ):
     print(f"Running training with project: {project}, network_airport_codes: {network_airport_codes}, "
           f"svi_steps: {svi_steps}, n_samples: {n_samples}, svi_lr: {svi_lr}, "
@@ -744,6 +745,7 @@ def train_cmd(
         auto_split,
         auto_split_limit,
         auto_split_random,
+        use_gpu,
     )
 
 
