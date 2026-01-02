@@ -1212,23 +1212,36 @@ def train(
     losses = []
     losses_from_prior = []
 
-    if not multiprocess:
+    # NOTE revised for printout
+    # decide whether we are interactive (a TTY)
+    interactive = sys.stdout.isatty()
+
+    # how often to print progress in non-interactive mode
+    progress_interval = max(1, svi_steps // 10)  # ~10 prints total
+
+    # Create the iterator (pbar) depending on environment
+    if interactive and (not multiprocess):
+        # local interactive: use tqdm
         pbar = tqdm(range(svi_steps))
-    else:
+    elif interactive and multiprocess and pbars is not None:
+        # interactive and pbars available: use your Pbar
         if prior_type == "failure":
             color = (255, 100, 100)
         elif prior_type == "nominal":
             color = (100, 100, 255)
         else:
             color = (200, 200, 200)
-        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
-        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
-        # safe_run_name = remove_non_ascii(run_name)
-        # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{safe_run_name}\n  task {pbars.id()}', color=color)
         pbar = Pbar(range(svi_steps), manager=pbars, name=f'task {pbars.id()}', color=color)
+    else:
+        # non-interactive (SLURM/batch): plain iterator with prints
+        pbar = range(svi_steps)
+        print(f"Running {svi_steps} SVI steps (non-interactive mode). Progress will be printed every {progress_interval} steps.", flush=True)
 
+    # run the loop
+    for step_idx in pbar:
+        # keep original 'i' semantics — rename to avoid confusion
+        i = step_idx
 
-    for i in pbar:
         loss = svi.step(states)
         losses.append(loss)
 
@@ -1240,17 +1253,65 @@ def train(
         elbo_from_prior = (
             sum([
                 -mst_prior.log_prob(z_sample)
-                .mean().item() 
+                .mean().item()
                 for z_sample in z_samples
-            ]) #/ len(z_samples)
-            * mst_prior_weight
+            ]) * mst_prior_weight
         )
         losses_from_prior.append(elbo_from_prior)
 
-        desc = f"ELBO loss: {loss:.2f}, mst mles: "
+        desc = f"[{day_strs}] ELBO loss: {loss:.2f}, mst mles: "
         desc += ", ".join([f'{mst_mle:.5f}' for mst_mle in mst_mles])
-        if not multiprocess:
-            pbar.set_description(desc)
+
+        # set tqdm / Pbar description only in interactive mode and when pbar has set_description
+        if interactive:
+            try:
+                pbar.set_description(desc)
+            except Exception:
+                # some progress wrappers may not support set_description; ignore
+                pass
+        else:
+            # non-interactive: print periodic status lines
+            if (i % progress_interval == 0) or (i == svi_steps - 1):
+                print(f"[SVI] step {i+1}/{svi_steps}, day(s) {day_strs}: {desc}", flush=True)
+    # if not multiprocess:
+    #     pbar = tqdm(range(svi_steps))
+    # else:
+    #     if prior_type == "failure":
+    #         color = (255, 100, 100)
+    #     elif prior_type == "nominal":
+    #         color = (100, 100, 255)
+    #     else:
+    #         color = (200, 200, 200)
+    #     # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{",".join(day_strs)} {group_name}\nprocess {pbars.id()}', color=color)
+    #     # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{run_name}\n  task {pbars.id()}', color=color)
+    #     # safe_run_name = remove_non_ascii(run_name)
+    #     # pbar = Pbar(range(svi_steps), manager=pbars, name=f'{safe_run_name}\n  task {pbars.id()}', color=color)
+    #     pbar = Pbar(range(svi_steps), manager=pbars, name=f'task {pbars.id()}', color=color)
+
+
+    # for i in pbar:
+    #     loss = svi.step(states)
+    #     losses.append(loss)
+
+    #     with pyro.plate("samples", n_samples, dim=-1):
+    #         posterior_samples = guide(states)
+    #     z_samples = [posterior_samples[f'{network_airport_codes[0]}_{t_idx}_mean_service_time'] for t_idx in range(mst_split)]
+    #     mst_mles = [z_samples[t_idx].mean().item() for t_idx in range(mst_split)]
+
+    #     elbo_from_prior = (
+    #         sum([
+    #             -mst_prior.log_prob(z_sample)
+    #             .mean().item() 
+    #             for z_sample in z_samples
+    #         ]) #/ len(z_samples)
+    #         * mst_prior_weight
+    #     )
+    #     losses_from_prior.append(elbo_from_prior)
+
+    #     desc = f"ELBO loss: {loss:.2f}, mst mles: "
+    #     desc += ", ".join([f'{mst_mle:.5f}' for mst_mle in mst_mles])
+    #     if not multiprocess:
+    #         pbar.set_description(desc)
                 
         if i % plot_every == 0 or i == svi_steps - 1:
 
@@ -1454,7 +1515,9 @@ def train_cmd(
         pbars = PbarPool(width=100)
         def initializer():
             sys.stdout = open(os.devnull, 'w')
-            return pbars.initializer()
+            # sys.stdout = open(f'worker_{os.getpid()}.log', 'w')
+            # return pbars.initializer()
+            return None
         warnings.simplefilter("ignore")
         os.environ["PYTHONWARNINGS"] = "ignore"
 
@@ -1471,7 +1534,7 @@ def train_cmd(
             plot_every,
             rng_seed,
             multiprocess,
-            # pbars,
+            pbars,
         )
 
     rem_args = [
@@ -1488,7 +1551,19 @@ def train_cmd(
 
     if multiprocess:
         with Pool(processes=processes, initializer=initializer()) as p:
-            # results_iterator = p.imap_unordered(base_func, rem_args)
+            results_iterator = p.imap_unordered(base_func, rem_args)
+            results = []
+            total = len(rem_args)
+            print(f"Starting processing {total} tasks...", flush=True)
+
+            for i, result in enumerate(results_iterator, 1):
+                results.append(result)
+
+                # Print every 10 tasks (or whatever interval you like)
+                if i % 10 == 0 or i == total:
+                    print(f"[{i}/{total}] tasks complete", flush=True)
+
+            print("Processing complete!", flush=True)
             
             # # 4. Wrap the iterator with tqdm
             # # This is the only line you need for the progress bar.
@@ -1507,13 +1582,14 @@ def train_cmd(
             # end_time = time.monotonic()
             # print(f"\nProcessing complete!")
             # print(f"Total execution time: {end_time - start_time:.2f} seconds")
-            global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
-            try:
-                results = list(global_pbar)
-            except Exception as e:
-                print("An error occurred during multiprocessing:")
-                print(e)
-                print("You can try running without --multiprocess to debug.")
+
+            # global_pbar = Pbar(p.imap_unordered(base_func, rem_args), manager=pbars, name='global', total=len(rem_args))
+            # try:
+            #     results = list(global_pbar)
+            # except Exception as e:
+            #     print("An error occurred during multiprocessing:")
+            #     print(e)
+            #     print("You can try running without --multiprocess to debug.")
             # try:
             #     for _ in global_pbar:
             #         pass

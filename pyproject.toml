@@ -54,6 +54,7 @@ polars = "^1.31.0"
 airporttime = "^0.0.0"
 scikit-learn = "^1.7.1"
 tqdl = "^0.0.4"
+joblib = "^1.5.3"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.1.1"

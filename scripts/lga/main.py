@@ -11,9 +11,12 @@ from tqdm import tqdm
 import dill
 import pyro
 import torch
+import torch.multiprocessing as mp
 
 from bayes_air.types.util import CoreAirports
 
+attempt_num = 4
+prior_scale = '0.00'
 
 class ExtraDataProcessing:
     @staticmethod
@@ -59,8 +62,11 @@ class ExtraDataProcessing:
         return s
 
     def process_extras(self, airport, start, end, freq='1D'):
-        year = 2019
-        month = 7
+        diff_years = int(end.split('-')[0]) - int(start.split('-')[0])
+        diff_months = int(end.split('-')[1]) - int(start.split('-')[1])
+
+        years = [start.split('-')[0] + i for i in range(diff_years)]
+        months = [start.split('-')[1] + i for i in range(diff_months)]
         start_date = start
         end_date = end
 
@@ -71,10 +77,20 @@ class ExtraDataProcessing:
         # print(weather_path)
         # TODO: handling in the bayesair remapped to like not have to do the "_decade" suffix
         # schedule_path = data_dir / 'bts_remapped/lga_reduced_2010-2019_clean_decade/parquet/lga_reduced_2010-2019_clean_decade.parquet'
-        schedule_path = data_dir / f'bts_remapped/{airport}/2019/clean_daily/parquet/On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_{year}_{month}_{airport}.parquet'
 
         wdf = pd.read_parquet(weather_path)
-        sdf = pd.read_parquet(schedule_path)
+
+        t_sdf = []
+        for year in years:
+            for month in months:
+                if year == '2018':
+                    schedule_path = data_dir / f'bts_remapped/{airport}/2018/clean_daily/parquet/On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_{year}_{month}_{airport}.parquet'
+                else:
+                    schedule_path = data_dir / f'bts_remapped/{airport}/2019/clean_daily/parquet/On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_{year}_{month}_{airport}.parquet'
+            
+                t_sdf.append(pd.read_parquet(schedule_path))
+
+        sdf = pd.concat(t_sdf, ignore_index=True)
 
         sdf = (
             sdf.set_index(
@@ -184,10 +200,11 @@ class ExtraDataProcessing:
 def deal_with_checkpoints(airport):
     dir_path = Path(__file__).parent.resolve()
 
-    start = '2019-07-15'
-    end = '2019-07-18'
+    # must be inclusive
+    start = '2019-07-01'
+    end = '2019-07-31'
 
-    checkpoints_dir = dir_path / f"{airport.lower()}-training-attempt-0/checkpoints/{airport}/"
+    checkpoints_dir = dir_path / f"{airport.lower()}-training-attempt-{attempt_num}/checkpoints/{airport}/"
     days = pd.date_range(start=start, end=end, freq='D').strftime('%Y-%m-%d').to_list()
 
     s_guide_dist_dict = {}
@@ -195,7 +212,7 @@ def deal_with_checkpoints(airport):
 
     pbar = tqdm(days)
     for name in pbar:
-        with open(checkpoints_dir / f'{name}/empty_0.00_gaussian/final/output_dict.pkl', 'rb') as f:
+        with open(checkpoints_dir / (f'{name}/empty_' + prior_scale + '_gaussian/final/output_dict.pkl'), 'rb') as f:
             s_guide_output_dict = dill.load(f)
         
         s_guide = s_guide_output_dict["guide"]
@@ -331,6 +348,13 @@ def test_train_no_cap(airport):
 
 
 if __name__ == "__main__":
+    try:
+        mp.set_start_method('spawn', force=True)
+        print(f'Set multiprocessing start method to spawn')
+    except RuntimeError:
+        pass
+
+
     apts = ['LGA']
     # single_test(apt)
     # test_train_no_cap(apt)
@@ -339,8 +363,8 @@ if __name__ == "__main__":
 
     # apts = ['LAS', 'LAX', 'SFO']
     dir_path = Path(__file__).parent.resolve()
-    # july_days = '2019-07-01,2019-07-02,2019-07-03,2019-07-04,2019-07-05,2019-07-06,2019-07-07,2019-07-08,2019-07-09,2019-07-10,2019-07-11,2019-07-12,2019-07-13,2019-07-14,2019-07-15,2019-07-16,2019-07-17,2019-07-18,2019-07-19,2019-07-20,2019-07-21,2019-07-22,2019-07-23,2019-07-24,2019-07-25,2019-07-26,2019-07-27,2019-07-28,2019-07-29,2019-07-30,2019-07-31'
-    july_days = '2019-07-15,2019-07-16,2019-07-17,2019-07-18'
+    july_days = '2019-07-01,2019-07-02,2019-07-03,2019-07-04,2019-07-05,2019-07-06,2019-07-07,2019-07-08,2019-07-09,2019-07-10,2019-07-11,2019-07-12,2019-07-13,2019-07-14,2019-07-15,2019-07-16,2019-07-17,2019-07-18,2019-07-19,2019-07-20,2019-07-21,2019-07-22,2019-07-23,2019-07-24,2019-07-25,2019-07-26,2019-07-27,2019-07-28,2019-07-29,2019-07-30,2019-07-31'
+    # july_days = '2019-07-15,2019-07-16,2019-07-17,2019-07-18'
     # july_days = '2019-07-15'
 
     for airport in apts:
@@ -356,27 +380,33 @@ if __name__ == "__main__":
 
         # ExtraDataProcessing().process_extras(
         #     airport=airport,
-        #     start='2019-07-15',
-        #     end='2019-07-19', # must be exclusive so add one day
+        #     start='2019-07-01',
+        #     end='2019-08-01', # must be exclusive so add one day
         # )
 
         print('Running network training')
+        print('Proj: ', f'{airport.lower()}-training-attempt-{attempt_num}')
         lga_network.train_cmd.main([
-            '--project', f'{airport.lower()}-training-attempt-0',
+            '--project', f'{airport.lower()}-training-attempt-{attempt_num}',
             '--day-strs', july_days,
             '--network-airport-codes', airport,
             '--multiprocess',
+            '--prior-scale', '0.0', # 0.10 originally, raised for testing
+            '--plot-every', '1000',
+            '--learn-together',
         ], standalone_mode=False)
         # raise ValueError('stop here')
         # NOTE also change code in respective method
+
         print('Dealing with checkpoints')
         deal_with_checkpoints(airport)
 
         print('Running final training')
         lga_training.train_cmd.main([
-            '--project', f'{airport.lower()}-training-attempt-0',
+            '--project', f'{airport.lower()}-training-attempt-{attempt_num}',
             '--day-strs', july_days,
             '--network-airport-codes', airport,
+            '--plot-every', '1000',
             # '--use-gpu',
         ], standalone_mode=False)
 

@@ -61,39 +61,80 @@ plot_service_times = functools.partial(
     xlim=(.005, .030) # new
 )
 
+
+# This function will be called once per worker process when it starts.
+def init_worker(model_func, device_str):
+    global global_model_func, global_device
+    global_model_func = model_func
+    global_device = torch.device(device_str)
+
+
+# The worker now receives a tuple of strings: (name, list_of_data_filepaths)
 @torch.no_grad
-def process_day_worker(args):
-    """
-    Worker function for parallel processing. It processes a single day's
-    subsample and returns the calculated log-probabilities.
-    """
-    # Unpack the arguments tuple
-    subsample, device = args
-    
-    name = subsample["name"]
-    model = subsample["model"]
-    
-    # Create a tensor to hold the results for this specific day
-    # This tensor is created and lives only within this worker process
-    # result_tensor = torch.zeros((300,), requires_grad=False).to(device)
+def process_day_worker(day_task_info):
+    name, day_strs = day_task_info
 
-    # The core computation loop for one day
-    # Note: The inner tqdm progress bar might create messy, interleaved output.
-    # You can remove it for a cleaner console log.
-    for zi in tqdm.tqdm(range(100, 400)):
+    # --- WORKER IS NOW RESPONSIBLE FOR LOADING ---
+    days = pd.to_datetime(day_strs)
+    data = ba_dataloader.load_remapped_data_bts(days, 'LGA') # Assuming airport is fixed
+    travel_times_dict, _ = make_travel_times_dict_and_observation_df(data, ['LGA'])
+    states = make_states(data, ['LGA'])
+    num_flights = sum([len(df) for df in data.values()])
+    # --- END OF LOADING ---
+
+    # The rest of the function proceeds as before...
+    model = functools.partial(
+        global_model_func,
+        states=states,
+        travel_times_dict=travel_times_dict,
+        device=global_device,
+        # ... other args ...
+    )
+    model_scale = 1.0 / num_flights
+    model = pyro.poutine.scale(model, scale=model_scale)
+
+    result_tensor = torch.zeros((300,), requires_grad=False).to(global_device)
+    for zi in range(100, 400):
         z = zi / 10000.0
-        tz = torch.tensor(z, requires_grad=False).to(device)
-        
-        # single_particle_y_given_z is called here
+        tz = torch.tensor(z, requires_grad=False).to(global_device)
         l = single_particle_y_given_z(model, tz)
-        
         result_tensor[zi - 100] = l
-    
-    # z_values = torch.arange(199, 400, device=device, dtype=torch.float32) / 10000.0
-    # result_tensor = single_particle_y_given_z(model, z_values)
 
-    # Return the day's name (as a key) and the computed tensor (as the value)
-    # return (name, result_tensor)
+    return (name, result_tensor)
+
+# @torch.no_grad
+# def process_day_worker(args):
+#     """
+#     Worker function for parallel processing. It processes a single day's
+#     subsample and returns the calculated log-probabilities.
+#     """
+#     # Unpack the arguments tuple
+#     subsample, device = args
+    
+#     name = subsample["name"]
+#     model = subsample["model"]
+    
+#     # Create a tensor to hold the results for this specific day
+#     # This tensor is created and lives only within this worker process
+#     # result_tensor = torch.zeros((300,), requires_grad=False).to(device)
+
+#     # The core computation loop for one day
+#     # Note: The inner tqdm progress bar might create messy, interleaved output.
+#     # You can remove it for a cleaner console log.
+#     for zi in tqdm.tqdm(range(100, 400)):
+#         z = zi / 10000.0
+#         tz = torch.tensor(z, requires_grad=False).to(device)
+        
+#         # single_particle_y_given_z is called here
+#         l = single_particle_y_given_z(model, tz)
+        
+#         result_tensor[zi - 100] = l
+    
+#     # z_values = torch.arange(199, 400, device=device, dtype=torch.float32) / 10000.0
+#     # result_tensor = single_particle_y_given_z(model, z_values)
+
+#     # Return the day's name (as a key) and the computed tensor (as the value)
+#     # return (name, result_tensor)
 
 
 def single_particle_model_log_prob(model, states):
@@ -242,6 +283,7 @@ def train(
 
     subsamples = {}
 
+    '''
     for day_strs in day_strs_list:
 
         # gather data
@@ -337,27 +379,50 @@ def train(
     # plt.close(fig)
     
     failure_prior = mst_prior_failure
-    nominal_prior = mst_prior_nominal
+    nominal_prior = mst_prior_nominal'''
 
     # --- PARALLEL PROCESSING SECTION ---
     # Prepare arguments for each worker. Each worker gets a subsample and the device.
-    worker_args = [(subsample, device) for subsample in subsamples.values()]
+    # worker_args = [(subsample, device) for subsample in subsamples.values()]
 
-    # Use one less than the total number of cores to keep the system responsive
+    # # Use one less than the total number of cores to keep the system responsive
+    # num_workers = max(1, cpu_count() - 1)
+    # print(f"\nStarting parallel processing with {num_workers} workers...")
+
+    # output_dict = {}
+    # with Pool(processes=num_workers) as pool:
+    #     # Use pool.imap_unordered to process days as they finish, which is more efficient.
+    #     # The main tqdm wrapper will show progress for the total number of days.
+    #     results_iterator = pool.imap_unordered(process_day_worker, worker_args)
+        
+    #     for name, result_tensor in tqdm.tqdm(results_iterator, total=len(subsamples)):
+    #         output_dict[name] = result_tensor.cpu() # Ensure tensor is on CPU
+
+    # print("Parallel processing complete.")
+    # Inside your train function...
+
+    # The main process NO LONGER loads any data.
+    # It just prepares a simple list of tasks.
+    task_list = []
+    for day_strs in day_strs_list:
+        name = ", ".join(day_strs)
+        task_list.append((name, day_strs))
+
+    model_function = augmented_air_traffic_network_model_simplified
     num_workers = max(1, cpu_count() - 1)
     print(f"\nStarting parallel processing with {num_workers} workers...")
 
     output_dict = {}
-    with Pool(processes=num_workers) as pool:
-        # Use pool.imap_unordered to process days as they finish, which is more efficient.
-        # The main tqdm wrapper will show progress for the total number of days.
-        results_iterator = pool.imap_unordered(process_day_worker, worker_args)
+    with Pool(
+        processes=num_workers,
+        initializer=init_worker,
+        initargs=(model_function, 'cpu')
+    ) as pool:
+        # Pass the simple list of strings to the workers
+        results_iterator = pool.imap_unordered(process_day_worker, task_list)
         
-        for name, result_tensor in tqdm.tqdm(results_iterator, total=len(subsamples)):
-            output_dict[name] = result_tensor.cpu() # Ensure tensor is on CPU
-
-    print("Parallel processing complete.")
-
+        for name, result_tensor in tqdm.tqdm(results_iterator, total=len(task_list)):
+            output_dict[name] = result_tensor.cpu()
     '''    
     output_dict = {}
 

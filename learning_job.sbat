@@ -71,7 +71,7 @@ echo "Dependencies installed."
 # ---------------------------
 # Make sure to set WANDB_API_KEY in your environment before sbatch,
 # or hardcode it here (less secure):
-export WANDB_API_KEY=5070bf86dae6f0c2d4c468c036c1e01955eccd60
+export WANDB_API_KEY=
 
 if [ -z "$WANDB_API_KEY" ]; then
     echo "ERROR: WANDB_API_KEY not set!"

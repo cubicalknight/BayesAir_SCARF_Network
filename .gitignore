@@ -178,3 +178,4 @@ cached_*/
 /scripts/lga/LAS_model_logprobs_finer_testing
 /scripts/lga/LAX_model_logprobs_finer_testing
 /scripts/lga/SFO_model_logprobs_finer_testing
+*.sbat
